@@ -316,3 +316,100 @@ ALTER TABLE chit_collections
 ALTER TABLE chits
     ADD COLUMN opening_paid DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER taken_month,
     ADD CONSTRAINT chk_chits_opening_paid CHECK (opening_paid >= 0);
+
+
+-- ======================= PART 8 : COLLECTION TABLE (receipts) =======================
+-- Change 7: every receipt is its own row (single payment or part/daily payments).
+-- A month's வரவு = sum of that chit's receipts dated in the month. The month sheet
+-- (chit_collections) takes its values from here and freezes them when the month is LOCKED.
+CREATE TABLE chit_payments (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    chit_no     INT           NOT NULL,
+    paid_date   DATE          NOT NULL,
+    amount      DECIMAL(12,2) NOT NULL,
+    remark      VARCHAR(500)  NULL,
+    created_by  INT           NULL,
+    created_at  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_by  INT           NULL,
+    updated_at  DATETIME      NULL ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_payments_chit FOREIGN KEY (chit_no) REFERENCES chits (chit_no),
+    CONSTRAINT chk_payments_amount CHECK (amount > 0),
+    INDEX idx_payments_date (paid_date),
+    INDEX idx_payments_chit_date (chit_no, paid_date)
+);
+
+-- Move the amounts already saved in the month sheet into the collection table (one row each)
+INSERT INTO chit_payments (chit_no, paid_date, amount, remark, created_by)
+SELECT chit_no, paid_date, paid_amount, remark, created_by
+FROM chit_collections
+WHERE paid_amount > 0 AND paid_date IS NOT NULL;
+
+-- Check
+SELECT COUNT(*) AS receipts, SUM(amount) AS total FROM chit_payments;
+SELECT SUM(paid_amount) AS sheet_total FROM chit_collections WHERE paid_amount > 0 AND paid_date IS NOT NULL;
+
+
+-- ======================= PART 9 : PAY STYLE (daily / part payers) =======================
+-- Change 8: mark a member as SINGLE (pays the full amount at once) or DAILY (pays part by part).
+-- daily_amount = optional usual daily amount, only a hint that is pre-filled in Collection.
+-- Run this BEFORE starting the new backend. Every existing member becomes SINGLE.
+ALTER TABLE chits
+    ADD COLUMN pay_mode VARCHAR(10) NOT NULL DEFAULT 'SINGLE' AFTER opening_paid,
+    ADD COLUMN daily_amount DECIMAL(12,2) NULL AFTER pay_mode,
+    ADD CONSTRAINT chk_chits_pay_mode CHECK (pay_mode IN ('SINGLE', 'DAILY')),
+    ADD CONSTRAINT chk_chits_daily_amount CHECK (daily_amount IS NULL OR daily_amount > 0);
+
+-- Check
+SELECT pay_mode, COUNT(*) AS members FROM chits GROUP BY pay_mode;
+
+-- Example: mark chit 2 as a daily payer with a usual daily amount of 200
+-- UPDATE chits SET pay_mode = 'DAILY', daily_amount = 200 WHERE chit_no = 2;
+
+
+-- ======================= PART 10 : DAILY COLLECTION - "day saved" marker =======================
+-- Change 9: the Collection > Daily page saves a whole day at once. A member who paid 0 gets NO receipt
+-- (chit_payments needs amount > 0), so this table remembers that the day was entered.
+-- Grid: a saved day shows 0 for members who paid nothing; a day that is not saved stays blank.
+-- Run this BEFORE starting the new backend.
+CREATE TABLE collection_days (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    day_date    DATE     NOT NULL,
+    save_count  INT      NOT NULL DEFAULT 1,
+    created_by  INT      NULL,
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_by  INT      NULL,
+    updated_at  DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT uq_collection_days_date UNIQUE (day_date)
+);
+
+-- Check
+SELECT COUNT(*) AS saved_days FROM collection_days;
+
+
+-- ======================= PART 11 : add members that are missing from the open month =======================
+-- Members added AFTER the open (DRAFT) month was generated were not in that month's sheet, so Collection did not
+-- list them and payments for them were refused ("Chit N is not in the sheet").
+-- The new backend now adds a new member to the open month automatically. Run this ONCE to fix the members
+-- that were added earlier (it is safe to run again: it only adds rows that are missing).
+INSERT INTO chit_collections (sheet_id, chit_no, paid_month, due_amount, paid_amount, created_by)
+SELECT t.sheet_id, t.chit_no, t.paid_month,
+       CASE WHEN t.taken_month IS NOT NULL AND t.paid_month > t.taken_month
+            THEN t.monthly_after_taken ELSE t.monthly_before_taken END,
+       0, 1
+FROM (
+    SELECT s.id AS sheet_id, c.chit_no, c.taken_month, p.monthly_before_taken, p.monthly_after_taken, p.total_months,
+           (s.sheet_year - YEAR(c.joined_date)) * 12 + (s.sheet_month - MONTH(c.joined_date)) + 1 AS paid_month
+    FROM monthly_sheet s
+    JOIN chits c ON c.status = 'ACTIVE'
+    JOIN chit_plans p ON p.plan_amount = c.plan_amount
+    WHERE s.status = 'DRAFT'
+      AND NOT EXISTS (SELECT 1 FROM chit_collections x WHERE x.sheet_id = s.id AND x.chit_no = c.chit_no)
+) t
+WHERE t.paid_month BETWEEN 1 AND t.total_months;
+
+-- Check: every active chit running in the open month must have a row (this should return 0 rows)
+SELECT c.chit_no, c.member_name
+FROM chits c JOIN monthly_sheet s ON s.status = 'DRAFT'
+WHERE c.status = 'ACTIVE'
+  AND (s.sheet_year - YEAR(c.joined_date)) * 12 + (s.sheet_month - MONTH(c.joined_date)) + 1 >= 1
+  AND NOT EXISTS (SELECT 1 FROM chit_collections x WHERE x.sheet_id = s.id AND x.chit_no = c.chit_no);

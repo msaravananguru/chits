@@ -14,11 +14,13 @@ public record ChitResponse(
 		Integer takenMonth,
 		String status,
 		BigDecimal openingPaid,
+		String payMode,
+		BigDecimal dailyAmount,
 		Integer createdBy
 ) {
 	public static ChitResponse from(Chit c) {
 		return new ChitResponse(c.getChitNo(), c.getMemberName(), c.getMemberNameTamil(),
 				c.getPlanAmount(), c.getJoinedDate(), c.getTakenMonth(), c.getStatus(),
-				c.getOpeningPaid(), c.getCreatedBy());
+				c.getOpeningPaid(), c.getPayMode(), c.getDailyAmount(), c.getCreatedBy());
 	}
 }

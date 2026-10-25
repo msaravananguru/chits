@@ -10,6 +10,8 @@ public interface MonthlySheetRepository extends JpaRepository<MonthlySheet, Inte
 
 	boolean existsByStatus(String status);
 
+	Optional<MonthlySheet> findFirstByStatus(String status);
+
 	Optional<MonthlySheet> findTopByOrderBySheetYearDescSheetMonthDesc();
 
 	Optional<MonthlySheet> findBySheetYearAndSheetMonth(Integer sheetYear, Integer sheetMonth);

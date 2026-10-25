@@ -13,8 +13,15 @@ const IconSheet = () => (
   </svg>
 );
 
+const IconCollect = () => (
+  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="3" y="6" width="18" height="12" rx="2.5" /><circle cx="12" cy="12" r="2.6" /><path d="M6.5 9.5v.01M17.5 14.5v.01" />
+  </svg>
+);
+
 const NAV = [
   { to: '/members', label: 'Members', icon: <IconMembers /> },
+  { to: '/collection', label: 'Collection', icon: <IconCollect /> },
   { to: '/sheet', label: 'Monthly Sheet', icon: <IconSheet /> },
 ];
 

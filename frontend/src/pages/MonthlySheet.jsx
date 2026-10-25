@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { post } from '../api.js';
 import { formatDate, formatINR, formatMonths, formatPlan, monthLabel } from '../format.js';
-import PaymentModal from '../components/PaymentModal.jsx';
+import PaymentsModal from '../components/PaymentsModal.jsx';
 import ConfirmModal from '../components/ConfirmModal.jsx';
 
 const keyOf = (s) => `${s.year}-${s.month}`;
@@ -32,7 +32,7 @@ export default function MonthlySheet() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('ALL'); // ALL | UNPAID
-  const [modal, setModal] = useState(null); // { type: 'pay' | 'generate' | 'lock', row? }
+  const [modal, setModal] = useState(null); // { type: 'pay' | 'generate' | 'lock', row? }  (row = chit number)
   const [toast, setToast] = useState('');
 
   const loadSheet = useCallback(async (period) => {
@@ -97,11 +97,8 @@ export default function MonthlySheet() {
     loadSheet({ year, month });
   };
 
-  const onPaymentSaved = async (message) => {
-    setModal(null);
-    setToast(message);
-    await loadSheet(selected);
-  };
+  // the payments window stays open; refresh the sheet behind it
+  const onPaymentsChanged = () => loadSheet(selected);
 
   async function generate() {
     await post('/sheets/generate', { year: next.year, month: next.month });
@@ -117,11 +114,14 @@ export default function MonthlySheet() {
     await loadList(selected);
   }
 
-  const editBtn = (r) => (
-    <button className="btn btn-small" onClick={() => setModal({ type: 'pay', row: r })}>
-      {Number(r.paidAmount) > 0 ? 'Edit' : 'Enter payment'}
-    </button>
-  );
+  const editBtn = (r) => {
+    if (!isDraft && !r.paymentCount) return null;
+    return (
+      <button className="btn btn-small" onClick={() => setModal({ type: 'pay', chitNo: r.chitNo })}>
+        {isDraft ? 'Payments' : 'View'}{r.paymentCount ? ` (${r.paymentCount})` : ''}
+      </button>
+    );
+  };
 
   const t = sheet?.totals;
 
@@ -206,7 +206,7 @@ export default function MonthlySheet() {
                           <th className="right">Due</th><th className="right">Received</th><th>Date</th>
                           <th className="right">Total paid</th><th className="right">Total to pay</th>
                           <th className="right">Months pending</th><th className="right">Balance</th>
-                          {isDraft && <th></th>}
+                          <th></th>
                         </tr>
                       </thead>
                       <tbody>
@@ -228,7 +228,7 @@ export default function MonthlySheet() {
                               <td className="right">{formatINR(r.totalDueAmount)}</td>
                               <td className="right">{formatMonths(r.monthsPending)}</td>
                               <td className="right strong">{formatINR(r.remainingAmount)}</td>
-                              {isDraft && <td className="right">{editBtn(r)}</td>}
+                              <td className="right">{editBtn(r)}</td>
                             </tr>
                           );
                         })}
@@ -243,7 +243,7 @@ export default function MonthlySheet() {
                           <td className="right">{formatINR(t.totalDueAmount)}</td>
                           <td></td>
                           <td className="right">{formatINR(t.remainingAmount)}</td>
-                          {isDraft && <td></td>}
+                          <td></td>
                         </tr>
                       </tfoot>
                     </table>
@@ -274,7 +274,7 @@ export default function MonthlySheet() {
                             <div><span>Balance</span><b>{formatINR(r.remainingAmount)}</b></div>
                           </div>
                           {r.remark && <div className="remark">{r.remark}</div>}
-                          {isDraft && <div className="row-actions">{editBtn(r)}</div>}
+                          {editBtn(r) && <div className="row-actions">{editBtn(r)}</div>}
                         </div>
                       );
                     })}
@@ -303,8 +303,9 @@ export default function MonthlySheet() {
         {isDraft && <button className="btn btn-primary" onClick={() => setModal({ type: 'lock' })}>Lock month</button>}
       </div>
 
-      {modal?.type === 'pay' && (
-        <PaymentModal sheet={sheet} row={modal.row} onClose={() => setModal(null)} onSaved={onPaymentSaved} />
+      {modal?.type === 'pay' && sheet && sheet.rows.some((r) => r.chitNo === modal.chitNo) && (
+        <PaymentsModal sheet={sheet} row={sheet.rows.find((r) => r.chitNo === modal.chitNo)}
+          onClose={() => setModal(null)} onChanged={onPaymentsChanged} />
       )}
       {modal?.type === 'generate' && (
         <ConfirmModal title={`Generate ${monthLabel(next.year, next.month)}`} confirmLabel="Generate"

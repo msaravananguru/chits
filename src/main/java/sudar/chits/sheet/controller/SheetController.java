@@ -12,10 +12,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import sudar.chits.audit.service.AuditService;
 import sudar.chits.common.exception.ApiException;
-import sudar.chits.sheet.dto.PaymentResponse;
 import sudar.chits.sheet.dto.SheetListItem;
 import sudar.chits.sheet.dto.SheetResponse;
-import sudar.chits.sheet.dto.SheetPaymentRequest;
 import sudar.chits.sheet.dto.SheetPeriodRequest;
 import sudar.chits.sheet.dto.SheetSummaryResponse;
 import sudar.chits.sheet.service.SheetService;
@@ -42,13 +40,6 @@ public class SheetController {
 		SheetSummaryResponse response = audited("GENERATE_MONTH", "monthly_sheet",
 				request.year() + "-" + request.month(), user -> sheetService.generate(request, user));
 		return ResponseEntity.status(HttpStatus.CREATED).body(response);
-	}
-
-	@PostMapping("/payment")
-	public ResponseEntity<PaymentResponse> payment(@RequestBody SheetPaymentRequest request) {
-		return ResponseEntity.ok(audited("UPDATE_PAYMENT", "chit_collections",
-				request.year() + "-" + request.month() + "/" + request.chitNo(),
-				user -> sheetService.savePayment(request, user)));
 	}
 
 	@PostMapping("/lock")

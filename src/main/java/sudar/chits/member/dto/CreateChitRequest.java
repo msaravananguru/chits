@@ -10,6 +10,8 @@ public record CreateChitRequest(
 		BigDecimal planAmount,
 		LocalDate joinedDate,
 		Integer takenMonth,       // optional, null = not taken
-		BigDecimal openingPaid    // optional, amount paid before the system started (default 0)
+		BigDecimal openingPaid,   // optional, amount paid before the system started (default 0)
+		String payMode,           // optional: SINGLE (default) or DAILY (pays part by part)
+		BigDecimal dailyAmount    // optional, usual daily amount (only with DAILY)
 ) {
 }

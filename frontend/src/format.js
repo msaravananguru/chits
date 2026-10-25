@@ -38,3 +38,15 @@ export function monthLabel(year, month) {
 export function formatMonths(n) {
   return Number(n).toFixed(2);
 }
+
+// Allowed dates for a receipt in a month sheet: min = first day, max = last day (or today if the month is not over)
+export function receiptDateLimits(year, month) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const lastDay = new Date(year, month, 0).getDate();
+  const min = `${year}-${pad(month)}-01`;
+  const last = `${year}-${pad(month)}-${pad(lastDay)}`;
+  const t = today();
+  const max = t < last ? t : last; // ISO dates compare correctly as text
+  return { min, max, initial: max };
+}
+

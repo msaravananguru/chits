@@ -105,6 +105,13 @@ Response **201**:
 | No `joinedDate` | 400 `joinedDate is required` |
 | `joinedDate` "25-10-2026" | 400 `Invalid request body. Check the JSON and the date format (yyyy-MM-dd).` |
 | No `X-User-Id` header | 401 `Header X-User-Id is required` |
+| `payMode` "WEEKLY" | 400 `payMode must be SINGLE or DAILY` |
+| `payMode` "SINGLE" with `dailyAmount` | 400 `dailyAmount can be set only when payMode is DAILY` |
+| `dailyAmount` 0 | 400 `dailyAmount must be greater than 0` |
+
+**Pay style (optional fields):** `"payMode": "DAILY", "dailyAmount": 200`. `payMode` is `SINGLE` (default, pays the full amount at once) or `DAILY` (pays part by part). `dailyAmount` is only a hint pre-filled in Collection and can be left out. The response includes `payMode` and `dailyAmount`.
+
+**Open month:** if a month is open (DRAFT) when the member is added, the member also gets a row in that month right away (same rules as "generate": the chit must be running in that month). Audit action `ADD_CHIT_TO_OPEN_MONTH`. Members added before this change are fixed by `day0.sql.txt` PART 11.
 
 ### 4.2 Get one member - `POST /api/chits/get`
 ```json
@@ -140,6 +147,8 @@ Error: 400 `status must be ACTIVE or CLOSED`.
 
 Errors: 404 `Chit no ... not found`; 400 `memberName cannot be blank`; 400 `status must be ACTIVE or CLOSED`.
 
+**Pay style in update:** send `"payMode": "DAILY"` (with or without `dailyAmount`) or `"payMode": "SINGLE"` (clears `dailyAmount`). When `payMode` is sent, `dailyAmount` is taken as sent (null = none). If `payMode` is left out, `dailyAmount` alone changes the amount of a DAILY member (400 for a SINGLE member).
+
 ### 4.5 Mark as taken - `POST /api/chits/taken`
 ```json
 { "chitNo": 42, "takenMonth": 3 }
@@ -154,6 +163,43 @@ Response 200: the member with `takenMonth` set.
 | Chit is CLOSED | 409 `Chit 42 is not ACTIVE` |
 
 ---
+
+### 4.6 Members page for one month - `POST /api/chits/overview`
+Body is optional. Without `year`/`month` it returns the newest sheet month (or the current calendar month if no sheet exists yet).
+```json
+{}
+```
+```json
+{ "year": 2026, "month": 9 }
+```
+Response 200:
+```json
+{
+  "year": 2026, "month": 10,
+  "source": "LIVE",
+  "sheetStatus": "DRAFT",
+  "months": [ { "id": 2, "year": 2026, "month": 10, "status": "DRAFT", "lockedAt": null } ],
+  "summary": { "activeCount": 42, "takenCount": 7, "paidCount": 31, "totalPaid": 516850 },
+  "rows": [
+    {
+      "chitNo": 2, "memberName": "...", "memberNameTamil": null, "planAmount": 100000,
+      "status": "ACTIVE", "takenMonth": 3, "chitMonth": 5, "totalMonths": 21, "completed": false,
+      "dueAmount": 6000, "paidAmount": 3000, "monthStatus": "PART",
+      "totalPaid": 23800, "totalToPay": 123000, "remaining": 99200,
+      "payMode": "DAILY", "dailyAmount": 200
+    }
+  ]
+}
+```
+- `source = FINAL` when the month is LOCKED: figures are read from the saved master rows (`chit_collections`), nothing is recalculated. `source = LIVE` when the month is DRAFT (or has no sheet): calculated now with the same formulas as the sheet.
+- `takenMonth` is the taken status **as it was in that month**: a chit taken in its month 3 shows `null` when you look at its month 1 or 2.
+- `chitMonth` = which month of the chit it is running (joined month = 1). `completed = true` when it is beyond `totalMonths`.
+- `monthStatus`: `PAID` (received >= due), `PART`, `NOT_PAID`, `NONE` (nothing due, e.g. completed).
+- `totalToPay` and `remaining` are given for every chit (not taken = lower amount for all months).
+- Rows: chits of the sheet, plus CLOSED chits, plus (live month only) chits added after the sheet was generated. A locked month never gets new members.
+- `summary` counts ACTIVE chits only.
+- `payMode` / `dailyAmount` are the member's current pay style. The same two fields are also in every row of `/api/sheets/get`.
+- Errors: 400 `year (2000 to 2100) and month (1 to 12) are required together`; 404 `Sheet 2026-05 not found` (when sheets exist but not for that month).
 
 ## 5. Monthly sheet
 
@@ -182,47 +228,8 @@ What it does:
 | `year` missing | 400 `year is required (2000 to 2100)` |
 | No chit runs in that month | 400 `No chits are running in 2026-10` |
 
-### 5.2 Save payment - `POST /api/sheets/payment`
-Saves the வரவு (amount received), the paid date and a remark for one chit in a DRAFT month.
-Body:
-```json
-{
-  "year": 2026,
-  "month": 10,
-  "chitNo": 41,
-  "paidAmount": 5000,
-  "paidDate": "2026-10-05",
-  "remark": "Paid in cash"
-}
-```
-- `paidAmount` is the total received for this chit in this month (0 = nothing received). Sending it again replaces the old value.
-- `paidDate` is required when `paidAmount` is greater than 0. When `paidAmount` is 0 the paid date is cleared.
-- `remark` is optional (max 500 characters). Use it to explain a correction of an earlier locked month.
-
-Response **200**:
-```json
-{
-  "year": 2026, "month": 10, "chitNo": 41, "paidMonth": 1,
-  "dueAmount": 5000.00, "paidAmount": 5000, "paidDate": "2026-10-05", "remark": "Paid in cash"
-}
-```
-
-| Test | Expected |
-|---|---|
-| Month not generated | 404 `Sheet 2026-10 not found` |
-| Chit not in that sheet | 404 `Chit 99 is not in the 2026-10 sheet` |
-| Month is LOCKED | 409 `Month 2026-10 is LOCKED and cannot be edited. Correct it in the next month with a remark` (testable after the lock API is built) |
-| `paidAmount` -1 | 400 `paidAmount cannot be negative` |
-| `paidAmount` 5000.555 | 400 `paidAmount can have at most 2 decimal places` |
-| `paidAmount` 5000 without `paidDate` | 400 `paidDate is required when paidAmount is greater than 0` |
-| `paidAmount` missing | 400 `paidAmount is required` |
-| `month` 13 | 400 `year and month (1 to 12) are required` |
-| `chitNo` missing | 400 `chitNo is required` |
-| `remark` over 500 characters | 400 `remark can have at most 500 characters` |
-
-Audit action: `UPDATE_PAYMENT` (old and new paid amount, date and remark). A rejected attempt is saved as FAILED.
-
-Needs the `remark` column (PART 6 of `day0.sql.txt`). The sheet get API needs the `opening_paid` column (PART 7).
+### 5.2 Save payment - REMOVED
+`POST /api/sheets/payment` no longer exists. Every receipt now goes into the collection table: see section 5A.
 
 ### 5.3 List months - `POST /api/sheets/list`
 Body: none. Newest month first (for the month picker).
@@ -249,6 +256,7 @@ Response 200:
       "chitNo": 41, "memberName": "Saravana Tailor", "memberNameTamil": "சரவணா டெய்லர்",
       "planAmount": 100000.00, "takenMonth": 1, "paidMonth": 1,
       "dueAmount": 5000.00, "paidAmount": 5000.00, "paidDate": "2026-10-05", "remark": "Paid in cash",
+      "paymentCount": 1,
       "totalPaid": 6500.00, "totalDueAmount": 125000.00, "monthsPending": 19.75, "remainingAmount": 118500.00
     }
   ],
@@ -265,7 +273,7 @@ Row fields and the Excel column they match:
 |---|---|---|
 | `paidMonth` | சீட்டு கட்டும் மாதம் | Chit month number (joined month = 1) |
 | `dueAmount` | கட்ட வேண்டிய தொகை | Saved when the month was generated |
-| `paidAmount` | வரவு | Entered with `/api/sheets/payment` |
+| `paidAmount` | வரவு | Sum of this chit's receipts dated in the month (section 5A). `paidDate` = latest receipt date, `remark` = receipt remarks joined with `;`, `paymentCount` = number of receipts |
 | `totalPaid` | மொத்தம் செலுத்திய தொகை | `openingPaid` + all `paidAmount` of this and earlier months |
 | `totalDueAmount` | மொத்தம் செலுத்த வேண்டிய தொகை | Taken in month t: `t x before + (months - t) x after`. Not taken: `months x before` (assumes it is never taken) |
 | `remainingAmount` | BALANCE AMOUNT | `totalDueAmount - totalPaid` |
@@ -312,6 +320,151 @@ A locked month is final. There is no unlock. Mistakes are corrected in the next 
 
 ---
 
+## 5A. Receipts (collection table) - `/api/payments/...`
+
+Every payment is its own row: a member pays once, or pays part by part (daily). The month sheet's வரவு is the sum of the receipts dated in that month, so nobody types வரவு on the main sheet.
+
+Rules:
+- A receipt belongs to the **month of its date**.
+- A receipt dated in a **LOCKED** month can never be added, changed or deleted (final). Enter it with a date in the open month and add a remark.
+- A date in the **next month** (after the latest sheet) is accepted even before that month is generated.
+- A date before the first sheet is rejected (older payments go into the member's `openingPaid`). A date in the future is rejected.
+- Amount must be greater than 0, at most 2 decimals.
+- Deleting a receipt removes the row; the old values stay in the audit log.
+
+### 5A.1 Add - `POST /api/payments/add`  (201)
+```json
+{ "chitNo": 41, "paidDate": "2026-10-05", "amount": 3000, "remark": "Cash, part 1" }
+```
+Response:
+```json
+{ "id": 1, "chitNo": 41, "memberName": "Saravana Dealer", "memberNameTamil": "சரவணா டெய்லர்",
+  "paidDate": "2026-10-05", "amount": 3000.00, "remark": "Cash, part 1", "createdBy": 1 }
+```
+
+### 5A.2 Update - `POST /api/payments/update`  (200)
+```json
+{ "id": 1, "amount": 3500, "paidDate": "2026-10-06", "remark": "Corrected" }
+```
+Fields left out stay unchanged. `remark` "" clears it. Returns the same shape as add.
+
+### 5A.3 Delete - `POST /api/payments/delete`  (204, no body)
+```json
+{ "id": 1 }
+```
+
+### 5A.4 List - `POST /api/payments/list`  (200)
+```json
+{ "year": 2026, "month": 10 }
+```
+Optional filters: `"chitNo": 41` (one member), `"date": "2026-10-05"` (one day).
+```json
+{ "year": 2026, "month": 10, "status": "DRAFT", "count": 2, "total": 5000.00,
+  "payments": [ { "id": 1, "chitNo": 41, "memberName": "...", "memberNameTamil": "...",
+                  "paidDate": "2026-10-05", "amount": 3000.00, "remark": "Cash, part 1", "createdBy": 1 } ] }
+```
+`status` is DRAFT, LOCKED or NO_SHEET (month not generated yet). Oldest first. Reads are not audited.
+
+| Test | Expected |
+|---|---|
+| Add 3000 for chit 41, date in the open month | 201 |
+| Add 2000 more the same day or later | 201; `/api/sheets/get` shows paidAmount 5000, paymentCount 2 |
+| Update id 1 to amount 3500 | 200; sheet shows 5500 |
+| Delete id 1 | 204; sheet shows 2000 |
+| Date in a LOCKED month | 409 `Month 2026-10 is LOCKED. Payments dated in it cannot be added, changed or deleted...` |
+| Date in the future | 400 `paidDate cannot be in the future` |
+| Date before the first sheet | 400 `There is no sheet for 2026-08 (it is before the first month)...` |
+| Chit not in the open sheet | 404 `Chit 99 is not in the 2026-10 sheet` |
+| Unknown chit | 404 `Chit 99 not found` |
+| `amount` 0 or negative | 400 `amount must be greater than 0` |
+| `amount` 100.555 | 400 `amount can have at most 2 decimal places` |
+| Missing `paidDate` / `amount` / `chitNo` | 400 `paidDate is required` etc. |
+| Update or delete an unknown id | 404 `Payment 99 not found` |
+| No `X-User-Id` header | 401 |
+
+Audit actions: `ADD_PAYMENT`, `UPDATE_PAYMENT_ENTRY`, `DELETE_PAYMENT` (old and new values). A rejected attempt is saved as FAILED.
+
+Needs the `chit_payments` table (PART 8 of `day0.sql.txt`).
+
+---
+
+## 5B. Collection page - `/api/collection/...`
+
+The Collection page has two tabs: **Daily** (members with `payMode` DAILY, shown as a DLC-style grid) and **Single** (members with `payMode` SINGLE). Money is still stored as receipts in `chit_payments`; these APIs read them grouped for the page and save a whole day at once.
+
+**SQL first:** run `day0.sql.txt` PART 10 (table `collection_days`) before starting the new backend.
+
+Both read APIs take an optional body `{ "year": 2026, "month": 10 }`. No body = the newest sheet (the open month). 404 if that month has no sheet.
+`source` is `FINAL` for a locked month (read only, `editable` false) and `LIVE` for the open month.
+
+### 5B.1 Daily grid - `POST /api/collection/daily`  (200)
+
+Response:
+```json
+{
+  "year": 2026, "month": 10, "source": "LIVE", "sheetStatus": "DRAFT", "editable": true,
+  "today": "2026-10-25", "daysInMonth": 31, "dailyCount": 5, "singleCount": 37,
+  "months": [ { "id": 2, "year": 2026, "month": 10, "status": "DRAFT", "lockedAt": null } ],
+  "savedDays": [22, 23, 24],
+  "rows": [
+    { "chitNo": 2, "memberName": "...", "memberNameTamil": "...", "takenMonth": 3, "dailyAmount": 200,
+      "dueAmount": 6000, "paidAmount": 4200, "balance": 1800,
+      "days": [200, 0, 200, "... 31 numbers ..."],
+      "counts": [1, 0, 1, "... receipts per day ..."] }
+  ],
+  "dayTotals": [400, 800, "... 'Total day Collection' for each day ..."],
+  "monthTotal": 12050
+}
+```
+- `days[i]` = total received by that member on day i+1 (0 when nothing). `counts[i]` = number of receipts that day; more than 1 means the grid does not edit that cell (use Payments).
+- `savedDays` = days saved on the Daily page. A saved day shows 0 for members who paid nothing; a day not in the list stays blank (not entered yet).
+- Only DAILY members are in `rows`. A locked month shows `dueAmount`/`paidAmount` saved when it was locked.
+
+### 5B.2 Save a whole day - `POST /api/collection/save-day`  (200)
+
+Request:
+```json
+{ "date": "2026-10-25", "remark": "optional", "entries": [ { "chitNo": 2, "amount": 200 }, { "chitNo": 40, "amount": 0 } ] }
+```
+Every entry becomes that member's **total for the day**:
+- no receipt + amount > 0 -> a receipt is added;
+- one receipt + a different amount -> that receipt is changed (amount > 0) or deleted (amount = 0);
+- same total as now -> unchanged;
+- amount 0 and no receipt -> nothing is kept (the day is still marked saved).
+All entries are saved in one transaction (all or none). The day is then recorded in `collection_days`.
+
+Response: `{ "date": "2026-10-25", "added": 3, "updated": 1, "removed": 1, "unchanged": 0, "dayTotal": 650 }`
+
+Errors: 400 date missing / in the future / entries missing / negative or 3-decimal amount / chit listed twice; 404 chit not found; 409 month is LOCKED (nothing can be added, changed or deleted), chit is CLOSED, or the member has 2 or more receipts on that day with a different total (change them one by one in Payments).
+Audit log: one `ADD_PAYMENT` / `UPDATE_PAYMENT_ENTRY` / `DELETE_PAYMENT` row per changed receipt (old and new values) and one `SAVE_COLLECTION_DAY` row for the day. A failed save is logged as FAILED.
+
+### 5B.3 Single list - `POST /api/collection/single`  (200)
+
+Response: same header fields as 5B.1 (`year, month, source, sheetStatus, editable, today, dailyCount, singleCount, months`) plus:
+```json
+{ "summary": { "count": 37, "paidCount": 21, "collected": 141500, "toCollect": 58000 },
+  "rows": [ { "chitNo": 3, "memberName": "...", "memberNameTamil": "...", "takenMonth": null,
+              "dueAmount": 5000, "paidAmount": 2500, "balance": 2500,
+              "lastPaidDate": "2026-10-18", "paymentCount": 1, "status": "PART" } ] }
+```
+`status` is PAID / PART / NOT_PAID / NONE (nothing due). `balance` never goes below 0. A payment from this tab uses `/api/payments/add` (5A.1).
+
+---
+
+### 5B.4 All members - `POST /api/collection/all`  (200)
+View-only list of every member of the month (Daily and Single together) for the **All** tab. Body is optional: `{ "year": 2026, "month": 10 }` (empty = the open month). Same month rules as 5B.3 (404 if that sheet does not exist; a locked month is returned as FINAL / `editable=false`).
+
+Response: `year, month, source (LIVE/FINAL/NONE), sheetStatus, editable, today, dailyCount, singleCount, months[]`, `summary { count, paidCount, collected, toCollect, dailyCollected, singleCollected }`, and `rows[]` sorted by chit no, each: `chitNo, memberName, memberNameTamil, takenMonth, payMode (DAILY/SINGLE), dailyAmount (Daily members only), dueAmount, paidAmount, balance (never negative), lastPaidDate, paymentCount, status (PAID/PART/NOT_PAID/NONE)`.
+No new SQL. Adding or changing money is still done from the Daily / Single tabs or the Payments pop-up.
+
+### 5B.5 Previous balance and "to pay now" (added to 5B.1, 5B.3, 5B.4 and the Members overview)
+Every row of `/api/collection/daily`, `/single`, `/all` and `/api/members/overview` now has two more fields:
+- `previousBalance` = everything the member paid before the 1st of the month (`opening_paid` + receipts dated before it) minus everything that was due in the months before it. **Positive = advance (paid ahead), negative = arrears (left unpaid earlier)**. A month's due is the amount saved in that month's sheet row; a month with no sheet row uses the plan rule. Nothing is stored; it is worked out from receipts and due amounts, so locked months never change.
+- `toPay` = `dueAmount - previousBalance - paidAmount`, never below 0. This is what the collector asks for now.
+- `status` (single/all rows) and `monthStatus` (members) are judged on `toPay`: PAID when `toPay` is 0 (also when an advance covers the due; the UI shows "From advance" when nothing was received), PART when something was received, else NOT_PAID.
+- `/single` summary `toCollect` and `/all` summary `toCollect` = sum of `toPay`. `/all` summary also has `dueTotal`, `arrears` and `advance`.
+No new SQL.
+
 ## 6. Check the results in MySQL
 
 ```sql
@@ -339,7 +492,7 @@ Reading APIs (get, list) are not audited.
 4. `/api/chits/list`, `/api/chits/get`.
 5. `/api/chits/update`, then `/api/chits/taken` (twice, to see the 409).
 6. `/api/sheets/generate` for the month, then again (expect 409).
-7. `/api/sheets/payment` for a few chits (try the error cases too), then check `chit_collections`.
+7. `/api/payments/add` for a few chits (single and part payments; try the error cases too), then `/api/payments/list`.
 8. `/api/sheets/get` and `/api/sheets/list`; compare the totals with your Excel sheet.
 9. `/api/sheets/lock`, then try payment on the locked month (409) and generate the next month.
 10. Run the SQL checks in section 6 after each step.

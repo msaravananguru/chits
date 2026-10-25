@@ -10,6 +10,8 @@ public record UpdateChitRequest(
 		String memberNameTamil,
 		LocalDate joinedDate,
 		String status,            // ACTIVE / CLOSED
-		BigDecimal openingPaid    // amount paid before the system started
+		BigDecimal openingPaid,   // amount paid before the system started
+		String payMode,           // SINGLE / DAILY. When sent, dailyAmount is taken as sent (null = none)
+		BigDecimal dailyAmount    // usual daily amount (only for DAILY)
 ) {
 }

@@ -17,6 +17,9 @@ import sudar.chits.member.dto.ChitNoRequest;
 import sudar.chits.member.dto.ChitResponse;
 import sudar.chits.member.dto.CreateChitRequest;
 import sudar.chits.member.dto.MarkTakenRequest;
+import sudar.chits.member.dto.MemberOverviewResponse;
+import sudar.chits.sheet.dto.SheetPeriodRequest;
+import sudar.chits.member.service.MemberOverviewService;
 import sudar.chits.member.dto.UpdateChitRequest;
 import sudar.chits.member.service.ChitService;
 import sudar.chits.user.entity.User;
@@ -27,12 +30,14 @@ import sudar.chits.user.service.CurrentUserService;
 public class ChitController {
 
 	private final ChitService chitService;
+	private final MemberOverviewService overviewService;
 	private final CurrentUserService currentUserService;
 	private final AuditService auditService;
 
-	public ChitController(ChitService chitService, CurrentUserService currentUserService,
-			AuditService auditService) {
+	public ChitController(ChitService chitService, MemberOverviewService overviewService,
+			CurrentUserService currentUserService, AuditService auditService) {
 		this.chitService = chitService;
+		this.overviewService = overviewService;
 		this.currentUserService = currentUserService;
 		this.auditService = auditService;
 	}
@@ -67,6 +72,13 @@ public class ChitController {
 	public ResponseEntity<List<ChitResponse>> list(@RequestBody(required = false) ChitListRequest request) {
 		currentUserService.requireUser();
 		return ResponseEntity.ok(chitService.listChits(request == null ? null : request.status()));
+	}
+
+	// Members page: one month, FINAL (locked, from master rows) or LIVE (calculated now); body optional
+	@PostMapping("/overview")
+	public ResponseEntity<MemberOverviewResponse> overview(@RequestBody(required = false) SheetPeriodRequest request) {
+		currentUserService.requireUser();
+		return ResponseEntity.ok(overviewService.overview(request));
 	}
 
 	/** Runs a write action as the calling user; a failed attempt is saved in the audit log as FAILED. */

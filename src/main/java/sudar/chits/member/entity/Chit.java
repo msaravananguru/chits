@@ -39,6 +39,14 @@ public class Chit {
 	@Column(name = "opening_paid", nullable = false, precision = 12, scale = 2)
 	private BigDecimal openingPaid = BigDecimal.ZERO;
 
+	// SINGLE = pays the full amount at once, DAILY = pays part by part (daily collection)
+	@Column(name = "pay_mode", nullable = false, length = 10)
+	private String payMode = "SINGLE";
+
+	// optional usual daily amount (only a hint for the collector)
+	@Column(name = "daily_amount", precision = 12, scale = 2)
+	private BigDecimal dailyAmount;
+
 	@Column(name = "created_by")
 	private Integer createdBy;
 
@@ -65,6 +73,10 @@ public class Chit {
 	public void setStatus(String status) { this.status = status; }
 	public BigDecimal getOpeningPaid() { return openingPaid; }
 	public void setOpeningPaid(BigDecimal openingPaid) { this.openingPaid = openingPaid; }
+	public String getPayMode() { return payMode; }
+	public void setPayMode(String payMode) { this.payMode = payMode; }
+	public BigDecimal getDailyAmount() { return dailyAmount; }
+	public void setDailyAmount(BigDecimal dailyAmount) { this.dailyAmount = dailyAmount; }
 	public Integer getCreatedBy() { return createdBy; }
 	public void setCreatedBy(Integer createdBy) { this.createdBy = createdBy; }
 	public Integer getUpdatedBy() { return updatedBy; }

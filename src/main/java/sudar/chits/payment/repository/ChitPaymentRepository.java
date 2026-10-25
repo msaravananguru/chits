@@ -11,11 +11,11 @@ import sudar.chits.payment.entity.ChitPayment;
 
 public interface ChitPaymentRepository extends JpaRepository<ChitPayment, Integer> {
 
-	/** All receipts with from <= date < to, oldest first. */
-	@Query("select p from ChitPayment p where p.paidDate >= :from and p.paidDate < :to order by p.paidDate, p.id")
-	List<ChitPayment> findInRange(@Param("from") LocalDate from, @Param("to") LocalDate to);
+	/** All receipts with startDate <= date < endDate, oldest first. */
+	@Query("select p from ChitPayment p where p.paidDate >= :startDate and p.paidDate < :endDate order by p.paidDate, p.id")
+	List<ChitPayment> findInRange(@Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
 
-	/** Total received per chit for every receipt dated before :to. Each row is [chitNo, total]. */
-	@Query("select p.chitNo, sum(p.amount) from ChitPayment p where p.paidDate < :to group by p.chitNo")
-	List<Object[]> sumByChitBefore(@Param("to") LocalDate to);
+	/** Total received per chit for every receipt dated before :beforeDate. Each row is [chitNo, total]. */
+	@Query("select p.chitNo, sum(p.amount) from ChitPayment p where p.paidDate < :beforeDate group by p.chitNo")
+	List<Object[]> sumByChitBefore(@Param("beforeDate") LocalDate beforeDate);
 }

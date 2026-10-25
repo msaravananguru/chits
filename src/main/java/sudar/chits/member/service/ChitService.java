@@ -20,6 +20,7 @@ import sudar.chits.member.entity.Chit;
 import sudar.chits.member.repository.ChitRepository;
 import sudar.chits.plan.entity.ChitPlan;
 import sudar.chits.plan.repository.ChitPlanRepository;
+import sudar.chits.sheet.service.SheetService;
 import sudar.chits.user.entity.User;
 
 @Service
@@ -28,12 +29,14 @@ public class ChitService {
 	private final ChitRepository chitRepository;
 	private final ChitPlanRepository chitPlanRepository;
 	private final AuditService auditService;
+	private final SheetService sheetService;
 
 	public ChitService(ChitRepository chitRepository, ChitPlanRepository chitPlanRepository,
-			AuditService auditService) {
+			AuditService auditService, SheetService sheetService) {
 		this.chitRepository = chitRepository;
 		this.chitPlanRepository = chitPlanRepository;
 		this.auditService = auditService;
+		this.sheetService = sheetService;
 	}
 
 	// ------------------------------------------------------------------ CREATE
@@ -72,6 +75,11 @@ public class ChitService {
 		}
 
 		BigDecimal openingPaid = checkOpeningPaid(req.openingPaid());
+		String payMode = req.payMode() == null || req.payMode().isBlank() ? "SINGLE" : checkPayMode(req.payMode());
+		BigDecimal dailyAmount = "DAILY".equals(payMode) ? checkDailyAmount(req.dailyAmount()) : null;
+		if ("SINGLE".equals(payMode) && req.dailyAmount() != null) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, "dailyAmount can be set only when payMode is DAILY");
+		}
 
 		// STEP 5: save (created_by = calling user)
 		Chit chit = new Chit();
@@ -82,6 +90,8 @@ public class ChitService {
 		chit.setJoinedDate(req.joinedDate());
 		chit.setTakenMonth(takenMonth);
 		chit.setOpeningPaid(openingPaid);
+		chit.setPayMode(payMode);
+		chit.setDailyAmount(dailyAmount);
 		chit.setStatus("ACTIVE");
 		chit.setCreatedBy(user.getId());
 		Chit saved = chitRepository.save(chit);
@@ -89,6 +99,9 @@ public class ChitService {
 		// STEP 6: audit
 		auditService.logSuccess(user, "CREATE_CHIT", "chits", String.valueOf(saved.getChitNo()),
 				null, snapshot(saved), "Chit " + saved.getChitNo() + " added for " + saved.getMemberName());
+
+		// STEP 7: a month is open: the new member joins it now (otherwise Collection would not list the member)
+		sheetService.addChitToOpenSheet(saved, user);
 
 		return ChitResponse.from(saved);
 	}
@@ -141,6 +154,20 @@ public class ChitService {
 		}
 		if (req.openingPaid() != null) {
 			chit.setOpeningPaid(checkOpeningPaid(req.openingPaid()));
+		}
+		if (req.payMode() != null) {
+			// pay style sent: both values are taken as sent (SINGLE clears the daily amount)
+			String mode = checkPayMode(req.payMode());
+			if ("SINGLE".equals(mode) && req.dailyAmount() != null) {
+				throw new ApiException(HttpStatus.BAD_REQUEST, "dailyAmount can be set only when payMode is DAILY");
+			}
+			chit.setPayMode(mode);
+			chit.setDailyAmount("DAILY".equals(mode) ? checkDailyAmount(req.dailyAmount()) : null);
+		} else if (req.dailyAmount() != null) {
+			if (!"DAILY".equals(chit.getPayMode())) {
+				throw new ApiException(HttpStatus.BAD_REQUEST, "dailyAmount can be set only when payMode is DAILY");
+			}
+			chit.setDailyAmount(checkDailyAmount(req.dailyAmount()));
 		}
 		chit.setUpdatedBy(user.getId());
 
@@ -221,6 +248,31 @@ public class ChitService {
 		return amount;
 	}
 
+	private String checkPayMode(String mode) {
+		String m = mode.trim().toUpperCase();
+		if (!"SINGLE".equals(m) && !"DAILY".equals(m)) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, "payMode must be SINGLE or DAILY");
+		}
+		return m;
+	}
+
+	// usual daily amount: null = not set, otherwise greater than 0 with at most 2 decimals
+	private BigDecimal checkDailyAmount(BigDecimal amount) {
+		if (amount == null) {
+			return null;
+		}
+		if (amount.signum() <= 0) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, "dailyAmount must be greater than 0");
+		}
+		if (amount.stripTrailingZeros().scale() > 2) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, "dailyAmount can have at most 2 decimal places");
+		}
+		if (amount.compareTo(new BigDecimal("9999999999.99")) > 0) {
+			throw new ApiException(HttpStatus.BAD_REQUEST, "dailyAmount is too large");
+		}
+		return amount;
+	}
+
 	private String blankToNull(String s) {
 		return s == null || s.isBlank() ? null : s.trim();
 	}
@@ -234,6 +286,8 @@ public class ChitService {
 		m.put("joinedDate", c.getJoinedDate());
 		m.put("takenMonth", c.getTakenMonth());
 		m.put("openingPaid", c.getOpeningPaid());
+		m.put("payMode", c.getPayMode());
+		m.put("dailyAmount", c.getDailyAmount());
 		m.put("status", c.getStatus());
 		return m;
 	}

@@ -5,7 +5,7 @@ import { formatINR, formatPlan, today } from '../format.js';
 
 const planKey = (p) => String(Number(p));
 
-export default function MemberFormModal({ mode, chit, plans, onClose, onSaved }) {
+export default function MemberFormModal({ mode, chit, plans, plan: chitPlan, nextChitNo, onBack, onMarkTaken, onClose, onSaved }) {
   const isEdit = mode === 'edit';
 
   const [form, setForm] = useState(() =>
@@ -18,16 +18,20 @@ export default function MemberFormModal({ mode, chit, plans, onClose, onSaved })
           joinedDate: chit.joinedDate,
           takenMonth: chit.takenMonth ?? '',
           openingPaid: chit.openingPaid ? String(Number(chit.openingPaid)) : '',
+          payMode: chit.payMode || 'SINGLE',
+          dailyAmount: chit.dailyAmount ? String(Number(chit.dailyAmount)) : '',
           status: chit.status,
         }
       : {
-          chitNo: '',
+          chitNo: nextChitNo ? String(nextChitNo) : '',
           memberName: '',
           memberNameTamil: '',
           planAmount: plans[0] ? planKey(plans[0].planAmount) : '',
           joinedDate: today(),
           takenMonth: '',
           openingPaid: '',
+          payMode: 'SINGLE',
+          dailyAmount: '',
           status: 'ACTIVE',
         }
   );
@@ -44,7 +48,12 @@ export default function MemberFormModal({ mode, chit, plans, onClose, onSaved })
     if (!form.memberName.trim()) return setError('Enter the member name');
     if (!form.joinedDate) return setError('Select the joined date');
     if (!isEdit && !form.planAmount) return setError('Select a plan');
-    if (form.openingPaid !== '' && !(Number(form.openingPaid) >= 0)) return setError('Opening paid cannot be negative');
+    if (isEdit && form.openingPaid !== '' && !(Number(form.openingPaid) >= 0)) return setError('Opening paid cannot be negative');
+    if (form.payMode === 'DAILY' && form.dailyAmount !== '' && !(Number(form.dailyAmount) > 0)) return setError('Usual daily amount must be greater than 0');
+    const payFields = {
+      payMode: form.payMode,
+      dailyAmount: form.payMode === 'DAILY' && form.dailyAmount !== '' ? Number(form.dailyAmount) : null,
+    };
 
     setBusy(true);
     try {
@@ -56,6 +65,7 @@ export default function MemberFormModal({ mode, chit, plans, onClose, onSaved })
           joinedDate: form.joinedDate,
           openingPaid: form.openingPaid === '' ? 0 : Number(form.openingPaid),
           status: form.status,
+          ...payFields,
         });
         onSaved(`Chit ${chit.chitNo} updated`);
       } else {
@@ -66,7 +76,8 @@ export default function MemberFormModal({ mode, chit, plans, onClose, onSaved })
           planAmount: Number(form.planAmount),
           joinedDate: form.joinedDate,
           takenMonth: form.takenMonth ? Number(form.takenMonth) : null,
-          openingPaid: form.openingPaid === '' ? 0 : Number(form.openingPaid),
+          openingPaid: 0,
+          ...payFields,
         });
         onSaved(`Chit ${form.chitNo} added`);
       }
@@ -77,7 +88,7 @@ export default function MemberFormModal({ mode, chit, plans, onClose, onSaved })
   }
 
   return (
-    <Modal title={isEdit ? `Edit chit ${chit.chitNo}` : 'Add member'} onClose={onClose}>
+    <Modal title={isEdit ? `Chit ${chit.chitNo} · ${chit.memberName}` : 'Add member'} onClose={onClose}>
       <form onSubmit={submit} noValidate>
         <div className="form-grid">
           <label className="field">
@@ -96,6 +107,12 @@ export default function MemberFormModal({ mode, chit, plans, onClose, onSaved })
               ))}
             </select>
           </label>
+
+          {!isEdit && nextChitNo > 1 && (
+            <div className="hint span-2">
+              Suggested: the last chit is {nextChitNo - 1}, so the next is {nextChitNo}. You can change it.
+            </div>
+          )}
 
           <label className="field span-2">
             <span>Member name</span>
@@ -132,17 +149,60 @@ export default function MemberFormModal({ mode, chit, plans, onClose, onSaved })
             </label>
           )}
 
-          <label className="field span-2">
-            <span>Already paid before this system <em>(optional, ₹)</em></span>
-            <input type="number" inputMode="decimal" min="0" step="0.01" value={form.openingPaid}
-              onChange={set('openingPaid')} placeholder="0" />
-          </label>
+          <div className="pay-style span-2">
+            <div className="pay-style-title">How does this member pay?</div>
+            <div className="segmented seg-2" role="group" aria-label="Pay style">
+              <button type="button" className={form.payMode === 'SINGLE' ? 'on' : ''}
+                onClick={() => setForm((f) => ({ ...f, payMode: 'SINGLE' }))}>Single payment</button>
+              <button type="button" className={form.payMode === 'DAILY' ? 'on' : ''}
+                onClick={() => setForm((f) => ({ ...f, payMode: 'DAILY' }))}>Daily / part payment</button>
+            </div>
+            {form.payMode === 'DAILY' && (
+              <label className="field">
+                <span>Usual daily amount <em>(optional, ₹)</em></span>
+                <input type="number" inputMode="decimal" min="0" step="0.01" value={form.dailyAmount}
+                  onChange={set('dailyAmount')} placeholder="e.g. 200" />
+              </label>
+            )}
+            <div className="small muted">
+              {form.payMode === 'DAILY'
+                ? 'Collectors will see "Daily" on this member, and the usual amount is pre-filled in Collection. It can be changed any time.'
+                : 'Pays the full amount at once.'}
+            </div>
+          </div>
+
+          {/* only when editing: opening paid is for old balances, not for new members */}
+          {isEdit && (
+            <label className="field span-2">
+              <span>Already paid before this system <em>(optional, ₹)</em></span>
+              <input type="number" inputMode="decimal" min="0" step="0.01" value={form.openingPaid}
+                onChange={set('openingPaid')} placeholder="0" />
+            </label>
+          )}
         </div>
+
+        {isEdit && (
+          <div className="taken-box">
+            <div>
+              <div className="name">Chit taken</div>
+              <div className="small muted">
+                {chit.takenMonth != null
+                  ? `Taken in month ${chit.takenMonth}${chitPlan ? ` · ${formatINR(chitPlan.monthlyAfterTaken)} a month from month ${chit.takenMonth + 1}` : ''}`
+                  : chit.status === 'ACTIVE' ? 'Not taken yet' : 'Not taken'}
+              </div>
+            </div>
+            {chit.takenMonth == null && chit.status === 'ACTIVE' && onMarkTaken && (
+              <button type="button" className="btn btn-small" onClick={onMarkTaken}>Mark taken…</button>
+            )}
+          </div>
+        )}
 
         {error && <div className="alert alert-error" role="alert">{error}</div>}
 
         <div className="modal-actions">
-          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          {isEdit && onBack
+            ? <button type="button" className="btn btn-ghost" onClick={onBack}>← Back</button>
+            : <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>}
           <button type="submit" className="btn btn-primary" disabled={busy}>
             {busy ? 'Saving…' : isEdit ? 'Save changes' : 'Add member'}
           </button>

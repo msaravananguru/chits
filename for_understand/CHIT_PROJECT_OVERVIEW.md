@@ -171,3 +171,59 @@ When the chit is marked as taken, the figures switch to the taken calculation.
 - Footer / total card = இந்த மாத வரவு. Search by name or chit no, and an "Unpaid" filter.
 - Desktop: table like the Excel sheet. Phone: one card per chit with the two main buttons above the bottom bar.
 - Member form has the "Already paid before this system" (opening paid) field.
+
+## 16. Collection table (receipts)
+
+- `chit_payments`: one row per receipt (chit, date, amount, remark). Single payers have one row a month, daily/part payers have many.
+- A month's வரவு on the main sheet = sum of that chit's receipts dated in the month. It is calculated live while the month is open and frozen into `chit_collections` when the month is locked.
+- A receipt belongs to the month of its date. A locked month rejects any add, change or delete dated in it.
+- APIs: `/api/payments/add`, `update`, `delete`, `list` (see API_DOCUMENT section 5A). `/api/sheets/payment` was removed.
+- Planned next: Collection screen (UI), editable taken-entry suggestions, import of the 42 chits from the Sep sheet, DLC grid report, month-end statement.
+
+## 17. UI for receipts (step 2)
+
+- **Collection page** (`#/collection`): pick a date, type the amount next to each member and press Add (Enter also works). The "Bal." button fills the balance due this month. Shows the day's total, the month so far, and the day's receipts (with delete). Replaces the DLC sheet.
+- **Payments window** (button on the Collection page and on the Monthly Sheet): every receipt of one chit in the month, with add, edit and delete. In a locked month it is read-only.
+- **Monthly Sheet**: the old "Enter payment" button is replaced by "Payments (n)". வரவு is calculated from the receipts.
+- Delete asks twice ("Sure? Delete"). A date can be from the 1st of the month up to today.
+
+## 18. Members page (month view)
+
+- **Columns:** Chit, Member, Plan, Chit month ("Month 4 of 21" + bar), this month's payment (Paid / Part / Not paid), Total paid, Total to pay, Remaining. No joined date, no actions column.
+- **Taken** is shown by colour: amber chit badge + amber left stripe + "Taken · month N" under the name. Not taken = green badge.
+- **Month picker** (left of Edit member): default = newest sheet month. A locked month is **Final** (read from the saved master rows, never changes); the open month is **Live** (calculated now from receipts).
+- In a past month the taken status and totals are what they were in that month (chit 17 taken in Oct shows "not taken" in Aug/Sep).
+- Total to pay and Remaining are shown for every member. When a chit is marked taken they are recalculated.
+- **Edit member** button: step 1 search by chit no or name, step 2 the edit form. "Mark taken..." lives inside the edit form. Add and edit work on the member record only, never on a locked month.
+- **Add member:** chit number is pre-filled with last chit no + 1 (editable).
+- Filters: All / Paid / Part / Not paid (for the selected month) and "Show closed".
+- API: `/api/chits/overview` (API_DOCUMENT 4.6).
+
+## 19. Pay style: Single or Daily
+
+- Each member is **Single** (pays the full amount at once, default) or **Daily** (pays part by part, like the DLC sheet). Optional "usual daily amount" (a hint only).
+- Set in Add member / Edit member ("How does this member pay?"), changeable any time. SQL: `day0.sql.txt` PART 9 (`chits.pay_mode`, `chits.daily_amount`); run it before starting the new backend. Existing members become Single.
+- **Members page:** tag under the name ("Daily · ₹200" / "Single") and a filter All / Daily only / Single only.
+- **Collection page:** same tag and filter; a Daily member's usual amount is pre-filled, so one tap on Add records it.
+- It is a label for the collectors only. Calculations, receipts and locked months are not affected.
+
+## 20. Collection page: Daily and Single tabs
+
+- **Two tabs** (the last tab used is remembered): **Daily** = members who pay part by part (like the DLC sheet), **Single** = members who pay once a month. The tab labels show the member counts.
+- **Month picker** at the top (default = open month). A locked month opens as **Final**: read only, nothing can be typed, Save buttons are hidden. Corrections go in the open month with a remark.
+- **Daily (desktop):** grid with days 1 to 31 across, one line per Daily member, and the totals **Total / Month due / Balance**. The highlighted column is the day being entered; the usual daily amount is pre-filled; Enter jumps to the next member. "Review: 4 paid · Rs 700 | 1 with 0" and one **Save all for 25 Oct** button open a confirm pop-up that lists every line; saving writes the whole day at once. The bottom line **Total day Collection** (like the DLC sheet) updates live.
+- **0 = nothing paid:** no receipt is kept, but the day is marked saved (`collection_days`), so the grid shows 0 for a saved day and blank for a day not entered yet.
+- **Editing a day:** pick the date, or click a day number / any earlier cell. Changed boxes turn yellow; the pop-up lists only the changed lines as "was -> now" (0 = receipt removed). Typed but unsaved amounts ask "Discard changes?" before the date changes. A cell with 2 or more receipts (shown "150 x2") is changed in the Payments window.
+- **Daily (phone):** "Enter day" = one line per member with an amount box, date arrows, fixed bottom bar "5 paid · Rs 800" + Save; "Month grid" = read-only grid, tap a day to jump to Enter day.
+- **Single (desktop):** table Chit, Member, Due, Received, Last paid, Status, amount box with Bal. and Add, Payments. "Payment date" (default today) is used for every Add. Summary boxes, search and All / Paid / Part / Not paid filter, total line.
+- **Single (phone):** one compact line per member (not-paid first), "+ Add" opens a sheet with a big amount box (balance pre-filled), Balance / Full buttons, Change date and Payments.
+- SQL: `day0.sql.txt` PART 10. APIs: `/api/collection/daily`, `/save-day`, `/single` (API_DOCUMENT 5B).
+- Planned later: Undo after Add, share receipt (WhatsApp text), amount warnings, "behind" marker, Excel/PDF export of the grid, overdue marker on Single.
+- **Members added while a month is open** now join that month's sheet automatically. Before this fix they were missing from Collection (and payments for them were refused). Members added earlier: run `day0.sql.txt` PART 11 once.
+
+### Collection page: All tab
+Third tab next to Daily and Single. It lists every member of the month (Daily and Single) with Chit, Member, Pay style (Daily with usual amount / Single), Due, Received, Balance, Last paid, Status and a Payments button. View only (no amount box, no Add). Search, status filter (All/Paid/Part/Not paid) and pay-style filter. Previous months are read only. API: `POST /api/collection/all`. Amount boxes no longer show the up/down arrows.
+
+### Previous balance (advance / arrears) and "To pay now"
+Extra money paid in a month is an **advance**; a short payment is **arrears**. Both carry forward automatically. Previous balance = (opening paid + receipts before the month) - (dues of the months before it); positive = advance (green "+₹800 adv"), negative = arrears (red "-₹2,000 due"). **To pay now** = this month's due - previous balance - received this month (never below 0), e.g. due 5,000 with 800 advance = 4,200; due 5,000 with 2,000 arrears = 7,000. Shown as two columns on the Daily grid (replaces Balance), Single, All and Members; on the phone as a big "to pay" number. Status uses To pay now ("From advance" when the advance covers the whole due). Nothing is stored, so locked months and imported data are unchanged. No SQL.
+

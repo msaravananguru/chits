@@ -4,6 +4,7 @@ import Layout from './components/Layout.jsx';
 import SignIn from './pages/SignIn.jsx';
 import Members from './pages/Members.jsx';
 import MonthlySheet from './pages/MonthlySheet.jsx';
+import Collection from './pages/Collection.jsx';
 
 function RequireAuth({ children }) {
   const { user, ready } = useAuth();
@@ -21,6 +22,7 @@ export default function App() {
           <Route element={<RequireAuth><Layout /></RequireAuth>}>
             <Route path="/" element={<Navigate to="/members" replace />} />
             <Route path="/members" element={<Members />} />
+            <Route path="/collection" element={<Collection />} />
             <Route path="/sheet" element={<MonthlySheet />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

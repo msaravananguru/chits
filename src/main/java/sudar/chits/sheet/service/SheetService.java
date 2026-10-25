@@ -2,6 +2,7 @@ package sudar.chits.sheet.service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -10,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
@@ -20,14 +22,14 @@ import sudar.chits.audit.service.AuditService;
 import sudar.chits.common.exception.ApiException;
 import sudar.chits.member.entity.Chit;
 import sudar.chits.member.repository.ChitRepository;
+import sudar.chits.payment.entity.ChitPayment;
+import sudar.chits.payment.repository.ChitPaymentRepository;
 import sudar.chits.plan.entity.ChitPlan;
 import sudar.chits.plan.repository.ChitPlanRepository;
-import sudar.chits.sheet.dto.PaymentResponse;
 import sudar.chits.sheet.dto.SheetListItem;
 import sudar.chits.sheet.dto.SheetResponse;
 import sudar.chits.sheet.dto.SheetRowResponse;
 import sudar.chits.sheet.dto.SheetTotalsResponse;
-import sudar.chits.sheet.dto.SheetPaymentRequest;
 import sudar.chits.sheet.dto.SheetPeriodRequest;
 import sudar.chits.sheet.dto.SheetSummaryResponse;
 import sudar.chits.sheet.entity.ChitCollection;
@@ -43,14 +45,17 @@ public class SheetService {
 	private final ChitCollectionRepository collectionRepository;
 	private final ChitRepository chitRepository;
 	private final ChitPlanRepository chitPlanRepository;
+	private final ChitPaymentRepository paymentRepository;
 	private final AuditService auditService;
 
 	public SheetService(MonthlySheetRepository sheetRepository, ChitCollectionRepository collectionRepository,
-			ChitRepository chitRepository, ChitPlanRepository chitPlanRepository, AuditService auditService) {
+			ChitRepository chitRepository, ChitPlanRepository chitPlanRepository,
+			ChitPaymentRepository paymentRepository, AuditService auditService) {
 		this.sheetRepository = sheetRepository;
 		this.collectionRepository = collectionRepository;
 		this.chitRepository = chitRepository;
 		this.chitPlanRepository = chitPlanRepository;
+		this.paymentRepository = paymentRepository;
 		this.auditService = auditService;
 	}
 
@@ -149,78 +154,54 @@ public class SheetService {
 		return SheetSummaryResponse.from(sheet, rows.size(), skipped);
 	}
 
-	// ----------------------------------------------------------------- PAYMENT
+	// ------------------------------------------------- ADD A NEW CHIT TO THE OPEN MONTH
+	/**
+	 * A chit added while a month is open (DRAFT) gets its row in that month right away, with the same
+	 * rules as "generate". Without it the member would not appear in Collection until the next month.
+	 * Does nothing (returns false) when no month is open, the chit is not ACTIVE, it is not running in
+	 * that month (not joined yet / finished), or it already has a row. Runs inside the caller's transaction.
+	 */
 	@Transactional
-	public PaymentResponse savePayment(SheetPaymentRequest req, User user) {
+	public boolean addChitToOpenSheet(Chit chit, User user) {
+		if (!"ACTIVE".equals(chit.getStatus())) {
+			return false;
+		}
+		Optional<MonthlySheet> open = sheetRepository.findFirstByStatus("DRAFT");
+		if (open.isEmpty()) {
+			return false;
+		}
+		MonthlySheet sheet = open.get();
+		if (collectionRepository.findBySheetIdAndChitNo(sheet.getId(), chit.getChitNo()).isPresent()) {
+			return false;
+		}
+		ChitPlan plan = chitPlanRepository.findById(chit.getPlanAmount()).orElse(null);
+		if (plan == null) {
+			return false;
+		}
+		int paidMonth = (sheet.getSheetYear() - chit.getJoinedDate().getYear()) * 12
+				+ (sheet.getSheetMonth() - chit.getJoinedDate().getMonthValue()) + 1;
+		if (paidMonth < 1 || paidMonth > plan.getTotalMonths()) {
+			return false;
+		}
+		boolean afterTaken = chit.getTakenMonth() != null && paidMonth > chit.getTakenMonth();
 
-		// STEP 1: validate the input
-		if (req.year() == null || req.month() == null || req.month() < 1 || req.month() > 12) {
-			throw new ApiException(HttpStatus.BAD_REQUEST, "year and month (1 to 12) are required");
-		}
-		if (req.chitNo() == null) {
-			throw new ApiException(HttpStatus.BAD_REQUEST, "chitNo is required");
-		}
-		BigDecimal amount = req.paidAmount();
-		if (amount == null) {
-			throw new ApiException(HttpStatus.BAD_REQUEST, "paidAmount is required");
-		}
-		if (amount.signum() < 0) {
-			throw new ApiException(HttpStatus.BAD_REQUEST, "paidAmount cannot be negative");
-		}
-		if (amount.stripTrailingZeros().scale() > 2) {
-			throw new ApiException(HttpStatus.BAD_REQUEST, "paidAmount can have at most 2 decimal places");
-		}
-		if (amount.compareTo(new BigDecimal("9999999999.99")) > 0) {
-			throw new ApiException(HttpStatus.BAD_REQUEST, "paidAmount is too large");
-		}
-		boolean received = amount.signum() > 0;
-		if (received && req.paidDate() == null) {
-			throw new ApiException(HttpStatus.BAD_REQUEST, "paidDate is required when paidAmount is greater than 0");
-		}
-		String remark = req.remark() == null || req.remark().isBlank() ? null : req.remark().trim();
-		if (remark != null && remark.length() > 500) {
-			throw new ApiException(HttpStatus.BAD_REQUEST, "remark can have at most 500 characters");
-		}
-		String period = req.year() + "-" + String.format("%02d", req.month());
+		ChitCollection row = new ChitCollection();
+		row.setSheetId(sheet.getId());
+		row.setChitNo(chit.getChitNo());
+		row.setPaidMonth(paidMonth);
+		row.setDueAmount(afterTaken ? plan.getMonthlyAfterTaken() : plan.getMonthlyBeforeTaken());
+		row.setPaidAmount(BigDecimal.ZERO);
+		row.setCreatedBy(user.getId());
+		collectionRepository.save(row);
 
-		// STEP 2: find the sheet
-		MonthlySheet sheet = sheetRepository.findBySheetYearAndSheetMonth(req.year(), req.month())
-				.orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Sheet " + period + " not found"));
-
-		// STEP 3: only a DRAFT month can be edited
-		if (!"DRAFT".equals(sheet.getStatus())) {
-			throw new ApiException(HttpStatus.CONFLICT, "Month " + period + " is " + sheet.getStatus()
-					+ " and cannot be edited. Correct it in the next month with a remark");
-		}
-
-		// STEP 4: find the chit's row in this sheet
-		ChitCollection row = collectionRepository.findBySheetIdAndChitNo(sheet.getId(), req.chitNo())
-				.orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND,
-						"Chit " + req.chitNo() + " is not in the " + period + " sheet"));
-		Map<String, Object> oldValues = rowValues(row);
-
-		// STEP 5: save (paid date is kept only when something was received)
-		row.setPaidAmount(amount);
-		row.setPaidDate(received ? req.paidDate() : null);
-		row.setRemark(remark);
-		row.setUpdatedBy(user.getId());
-		ChitCollection saved = collectionRepository.save(row);
-
-		// STEP 6: audit
-		auditService.logSuccess(user, "UPDATE_PAYMENT", "chit_collections", String.valueOf(saved.getId()),
-				oldValues, rowValues(saved),
-				"Chit " + saved.getChitNo() + ", " + period + ": paid " + saved.getPaidAmount().toPlainString());
-
-		return PaymentResponse.from(sheet, saved);
-	}
-
-	private Map<String, Object> rowValues(ChitCollection c) {
-		Map<String, Object> m = new LinkedHashMap<>();
-		m.put("chitNo", c.getChitNo());
-		m.put("paidAmount", c.getPaidAmount());
-		m.put("paidDate", c.getPaidDate());
-		m.put("remark", c.getRemark());
-		return m;
+		Map<String, Object> newValues = new LinkedHashMap<>();
+		newValues.put("chitNo", chit.getChitNo());
+		newValues.put("paidMonth", paidMonth);
+		newValues.put("dueAmount", row.getDueAmount());
+		auditService.logSuccess(user, "ADD_CHIT_TO_OPEN_MONTH", "chit_collections", String.valueOf(sheet.getId()), null,
+				newValues, "Chit " + chit.getChitNo() + " added to the open month "
+						+ sheet.getSheetYear() + "-" + String.format("%02d", sheet.getSheetMonth()));
+		return true;
 	}
 
 	// --------------------------------------------------------------------- LOCK
@@ -251,6 +232,9 @@ public class SheetService {
 		List<ChitCollection> rows = collectionRepository.findBySheetIdOrderByChitNo(sheet.getId());
 		for (ChitCollection c : rows) {
 			SheetRowResponse r = byChit.get(c.getChitNo());
+			c.setPaidAmount(r.paidAmount());
+			c.setPaidDate(r.paidDate());
+			c.setRemark(r.remark());
 			c.setTotalPaid(r.totalPaid());
 			c.setTotalDueAmount(r.totalDueAmount());
 			c.setMonthsPending(r.monthsPending());
@@ -301,17 +285,14 @@ public class SheetService {
 				.orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Sheet " + period + " not found"));
 		List<ChitCollection> rows = collectionRepository.findBySheetIdOrderByChitNo(sheet.getId());
 
-		// STEP 3: total received so far per chit (this month and all earlier months)
-		int target = monthIndex(sheet);
-		List<Integer> sheetIds = new ArrayList<>();
-		for (MonthlySheet s : sheetRepository.findAll()) {
-			if (monthIndex(s) <= target) {
-				sheetIds.add(s.getId());
-			}
-		}
+		// STEP 3: receipts - this month's list per chit, and the total received up to the end of this month
+		LocalDate monthStart = LocalDate.of(sheet.getSheetYear(), sheet.getSheetMonth(), 1);
+		LocalDate nextMonthStart = monthStart.plusMonths(1);
+		Map<Integer, List<ChitPayment>> monthPayments = paymentRepository.findInRange(monthStart, nextMonthStart)
+				.stream().collect(Collectors.groupingBy(ChitPayment::getChitNo));
 		Map<Integer, BigDecimal> receivedUpToNow = new HashMap<>();
-		for (ChitCollection c : collectionRepository.findBySheetIdIn(sheetIds)) {
-			receivedUpToNow.merge(c.getChitNo(), c.getPaidAmount(), BigDecimal::add);
+		for (Object[] r : paymentRepository.sumByChitBefore(nextMonthStart)) {
+			receivedUpToNow.put((Integer) r[0], (BigDecimal) r[1]);
 		}
 
 		// STEP 4: members and plans
@@ -345,17 +326,37 @@ public class SheetService {
 						"Member or plan not found for chit " + c.getChitNo());
 			}
 
+			List<ChitPayment> mine = monthPayments.getOrDefault(c.getChitNo(), List.of());
+			BigDecimal paidAmount;
+			LocalDate paidDate;
+			String remark;
 			BigDecimal totalPaid;
 			BigDecimal totalDue;
 			BigDecimal remaining;
 			BigDecimal pending;
 			if (locked && c.getTotalPaid() != null) {
 				// a locked month shows the values saved when it was locked
+				paidAmount = c.getPaidAmount();
+				paidDate = c.getPaidDate();
+				remark = c.getRemark();
 				totalPaid = c.getTotalPaid();
 				totalDue = c.getTotalDueAmount();
 				remaining = c.getRemainingAmount();
 				pending = c.getMonthsPending();
 			} else {
+				paidAmount = BigDecimal.ZERO;
+				paidDate = null;
+				StringBuilder notes = new StringBuilder();
+				for (ChitPayment p : mine) {
+					paidAmount = paidAmount.add(p.getAmount());
+					if (paidDate == null || p.getPaidDate().isAfter(paidDate)) {
+						paidDate = p.getPaidDate();
+					}
+					if (p.getRemark() != null && notes.indexOf(p.getRemark()) < 0) {
+						notes.append(notes.length() > 0 ? "; " : "").append(p.getRemark());
+					}
+				}
+				remark = notes.length() == 0 ? null : (notes.length() > 500 ? notes.substring(0, 500) : notes.toString());
 				totalPaid = chit.getOpeningPaid().add(receivedUpToNow.getOrDefault(c.getChitNo(), BigDecimal.ZERO));
 				Integer taken = chit.getTakenMonth();
 				BigDecimal before = plan.getMonthlyBeforeTaken();
@@ -375,10 +376,11 @@ public class SheetService {
 
 			out.add(new SheetRowResponse(c.getChitNo(), chit.getMemberName(), chit.getMemberNameTamil(),
 					chit.getPlanAmount(), chit.getTakenMonth(), c.getPaidMonth(), c.getDueAmount(),
-					c.getPaidAmount(), c.getPaidDate(), c.getRemark(), totalPaid, totalDue, pending, remaining));
+					paidAmount, paidDate, remark, mine.size(), totalPaid, totalDue, pending, remaining,
+					chit.getPayMode(), chit.getDailyAmount()));
 
 			sumDue = sumDue.add(c.getDueAmount());
-			sumPaid = sumPaid.add(c.getPaidAmount());
+			sumPaid = sumPaid.add(paidAmount);
 			sumTotalPaid = sumTotalPaid.add(totalPaid);
 			sumTotalDue = sumTotalDue.add(totalDue);
 			sumRemaining = sumRemaining.add(remaining);

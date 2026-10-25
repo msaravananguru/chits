@@ -1,0 +1,107 @@
+-- =====================================================================
+-- REAL DATA : the 42 chits, loaded from the Sudar Chits sheets of Jun, Jul, Aug and Sep 2026
+-- File: real_data_insert.sql.txt   (run AFTER day0.sql.txt PART 1 to PART 8)
+--
+-- What this loads : one row per chit in the `chits` table.
+--   * opening_paid = "மொத்தம் செலுத்திய தொகை" on the SEP sheet (everything paid up to and
+--                    including September). The system starts from OCTOBER 2026.
+--   * joined_date  = first day of the month the member joined (worked out from the chit month
+--                    number on the sheets; the day of the month is not needed).
+--   * taken_month  = number of months paid at the LOWER amount (the higher amount starts the
+--                    month after). NULL = not taken yet.
+--   * plan_amount  = from the name on the sheet (_50K, _1Lak, _2Lak, _25K).
+--   * Names: the plan suffix (_1Lak, _50K ...) is removed because the plan is its own column.
+--     Tamil names are kept as written in member_name (English spelling can be added later with Edit).
+--
+-- Checks done against the PDFs: 42 chits; the sum of opening_paid = 516850 = the Sep sheet
+-- footer "total paid"; for every chit total paid (Sep) = total paid (Aug) + Sep received.
+-- =====================================================================
+
+-- ---------------------------------------------------------------------
+-- STEP A  Remove the TEST data (chits 1, 7, 41 and the test months/receipts).
+-- Only because this is a test database. audit_log is kept.
+-- ---------------------------------------------------------------------
+-- MySQL Workbench blocks DELETE without WHERE (error 1175); switch that off for this session only
+SET SQL_SAFE_UPDATES = 0;
+
+DELETE FROM chit_payments;
+DELETE FROM chit_collections;
+DELETE FROM monthly_sheet;
+DELETE FROM chits;
+
+SET SQL_SAFE_UPDATES = 1;
+
+-- ---------------------------------------------------------------------
+-- STEP B  The 42 chits
+-- ---------------------------------------------------------------------
+INSERT INTO chits
+    (chit_no, member_name, plan_amount, joined_date, taken_month, opening_paid, status, created_by)
+VALUES
+    (1, 'Chennai Tailore', 50000, '2026-05-01', NULL, 10000, 'ACTIVE', 1),   -- 50K, joined May 2026 (Sep = chit month 5), paid up to Sep 10000
+    (2, 'மாரிமுத்து ஷாப் MKDNL', 100000, '2026-06-01', 1, 20800, 'ACTIVE', 1),   -- 1 Lakh, joined Jun 2026 (Sep = chit month 4), paid up to Sep 20800; TAKEN: settled 02-07 (month 2); July due already 6000
+    (3, 'பாலாஜி ஸ்டுடியோ', 100000, '2026-06-01', NULL, 6800, 'ACTIVE', 1),   -- 1 Lakh, joined Jun 2026 (Sep = chit month 4), paid up to Sep 6800
+    (4, 'Bombay Sweets_1', 100000, '2026-06-01', 2, 21100, 'ACTIVE', 1),   -- 1 Lakh, joined Jun 2026 (Sep = chit month 4), paid up to Sep 21100; TAKEN: settled 24-07 (month 2); July due 5000, Aug 6000
+    (5, 'Bombay Sweets_2', 100000, '2026-06-01', NULL, 9500, 'ACTIVE', 1),   -- 1 Lakh, joined Jun 2026 (Sep = chit month 4), paid up to Sep 9500
+    (6, 'Bombay Sweets_3', 100000, '2026-06-01', NULL, 5000, 'ACTIVE', 1),   -- 1 Lakh, joined Jun 2026 (Sep = chit month 4), paid up to Sep 5000
+    (7, 'Subhishka', 50000, '2026-06-01', NULL, 10000, 'ACTIVE', 1),   -- 50K, joined Jun 2026 (Sep = chit month 4), paid up to Sep 10000
+    (8, 'முனியம்மாள்', 100000, '2026-06-01', NULL, 15200, 'ACTIVE', 1),   -- 1 Lakh, joined Jun 2026 (Sep = chit month 4), paid up to Sep 15200
+    (9, 'திவ்யா ஸ்ரீ காய்கறி', 100000, '2026-06-01', NULL, 19400, 'ACTIVE', 1),   -- 1 Lakh, joined Jun 2026 (Sep = chit month 4), paid up to Sep 19400
+    (10, 'M. K. காய்கறி', 100000, '2026-06-01', NULL, 19200, 'ACTIVE', 1),   -- 1 Lakh, joined Jun 2026 (Sep = chit month 4), paid up to Sep 19200
+    (11, 'ஒலிம்பியா Sports', 50000, '2026-06-01', NULL, 7700, 'ACTIVE', 1),   -- 50K, joined Jun 2026 (Sep = chit month 4), paid up to Sep 7700; NOTE: sheet label is 1 behind the calendar from Aug (Sep sheet says 3, calendar says 4)
+    (12, 'முத்துகணேஷ்_1', 100000, '2026-06-01', NULL, 20000, 'ACTIVE', 1),   -- 1 Lakh, joined Jun 2026 (Sep = chit month 4), paid up to Sep 20000
+    (13, 'முத்துகணேஷ்_2', 100000, '2026-06-01', NULL, 20000, 'ACTIVE', 1),   -- 1 Lakh, joined Jun 2026 (Sep = chit month 4), paid up to Sep 20000
+    (14, 'ஒலிம்பியா தேவி', 50000, '2026-06-01', 1, 12000, 'ACTIVE', 1),   -- 50K, joined Jun 2026 (Sep = chit month 4), paid up to Sep 12000; TAKEN: settled 24-06 (month 1); due 3000 from month 1 -> exact value needs step 3
+    (15, 'முத்துலெட்சுமி சுரண்டை', 100000, '2026-07-01', NULL, 15000, 'ACTIVE', 1),   -- 1 Lakh, joined Jul 2026 (Sep = chit month 3), paid up to Sep 15000
+    (16, 'S அனிதாஜாக்குலின் மேரி ஆசிரியை', 100000, '2026-07-01', NULL, 15000, 'ACTIVE', 1),   -- 1 Lakh, joined Jul 2026 (Sep = chit month 3), paid up to Sep 15000
+    (17, 'மாரியப்பன் சென்னை-1', 100000, '2026-07-01', 3, 15000, 'ACTIVE', 1),   -- 1 Lakh, joined Jul 2026 (Sep = chit month 3), paid up to Sep 15000; TAKEN: 3rd chit settlement Sep (month 3)
+    (18, 'மாரியப்பன் சென்னை-2', 100000, '2026-07-01', 3, 15000, 'ACTIVE', 1),   -- 1 Lakh, joined Jul 2026 (Sep = chit month 3), paid up to Sep 15000; TAKEN: 3rd chit settlement Sep (month 3)
+    (19, 'முசிந்தா', 200000, '2026-07-01', NULL, 30000, 'ACTIVE', 1),   -- 2 Lakh, joined Jul 2026 (Sep = chit month 3), paid up to Sep 30000
+    (20, 'ம. துரைச்சி ஆசிரியை', 100000, '2026-07-01', NULL, 15000, 'ACTIVE', 1),   -- 1 Lakh, joined Jul 2026 (Sep = chit month 3), paid up to Sep 15000; NOTE: plan changed 2 Lakh (Jul, Aug) -> 1 Lakh (Sep); opening paid 15000 as on the Sep sheet
+    (21, 'சுலைமான் ஷேக் (சம்சா வியாபாரி)-1', 100000, '2026-07-01', NULL, 15000, 'ACTIVE', 1),   -- 1 Lakh, joined Jul 2026 (Sep = chit month 3), paid up to Sep 15000
+    (22, 'சுலைமான் ஷேக் (சம்சா வியாபாரி)-2', 100000, '2026-07-01', NULL, 15000, 'ACTIVE', 1),   -- 1 Lakh, joined Jul 2026 (Sep = chit month 3), paid up to Sep 15000
+    (23, 'சுலைமான் ஷேக் (சம்சா வியாபாரி)-3', 100000, '2026-07-01', NULL, 15000, 'ACTIVE', 1),   -- 1 Lakh, joined Jul 2026 (Sep = chit month 3), paid up to Sep 15000
+    (24, 'செல்வி MKDNL', 50000, '2026-07-01', NULL, 4500, 'ACTIVE', 1),   -- 50K, joined Jul 2026 (Sep = chit month 3), paid up to Sep 4500
+    (25, 'சீனிவாசன்', 50000, '2026-07-01', NULL, 7500, 'ACTIVE', 1),   -- 50K, joined Jul 2026 (Sep = chit month 3), paid up to Sep 7500
+    (26, 'க. அன்னலட்சுமி ஆசிரியை', 200000, '2026-07-01', NULL, 30000, 'ACTIVE', 1),   -- 2 Lakh, joined Jul 2026 (Sep = chit month 3), paid up to Sep 30000
+    (27, 'G.Viniska (விநிஷ்கா)', 100000, '2026-07-01', NULL, 15000, 'ACTIVE', 1),   -- 1 Lakh, joined Jul 2026 (Sep = chit month 3), paid up to Sep 15000
+    (28, 'ஆறுமுகச்சாமி (துர்க்கா)', 100000, '2026-07-01', NULL, 15000, 'ACTIVE', 1),   -- 1 Lakh, joined Jul 2026 (Sep = chit month 3), paid up to Sep 15000
+    (29, 'ஶ்ரீதர் சிங்_1', 50000, '2026-07-01', NULL, 6500, 'ACTIVE', 1),   -- 50K, joined Jul 2026 (Sep = chit month 3), paid up to Sep 6500; NOTE: sheet label is 1 behind the calendar from Aug (Sep sheet says 2, calendar says 3)
+    (30, 'ஶ்ரீதர் சிங்_2', 50000, '2026-08-01', NULL, 6500, 'ACTIVE', 1),   -- 50K, joined Aug 2026 (Sep = chit month 2), paid up to Sep 6500
+    (31, 'Tanvika Surya Surandai', 50000, '2026-08-01', NULL, 5000, 'ACTIVE', 1),   -- 50K, joined Aug 2026 (Sep = chit month 2), paid up to Sep 5000
+    (32, 'பிலால் பரோட்டா_சித்திக்_Krishnapuram', 200000, '2026-08-01', NULL, 20000, 'ACTIVE', 1),   -- 2 Lakh, joined Aug 2026 (Sep = chit month 2), paid up to Sep 20000
+    (33, 'சுந்தர் அண்ணன் அணுகுண்டு', 100000, '2026-08-01', NULL, 10000, 'ACTIVE', 1),   -- 1 Lakh, joined Aug 2026 (Sep = chit month 2), paid up to Sep 10000
+    (34, 'சிந்தாமணி கத்தார்', 100000, '2026-08-01', 1, 12000, 'ACTIVE', 1),   -- 1 Lakh, joined Aug 2026 (Sep = chit month 2), paid up to Sep 12000; TAKEN: settled 22-08 (month 1); due 6000 from month 1 -> exact value needs step 3
+    (35, 'மகேஸ்வரி_வாசு', 200000, '2026-08-01', 1, 10000, 'ACTIVE', 1),   -- 2 Lakh, joined Aug 2026 (Sep = chit month 2), paid up to Sep 10000; TAKEN: settled 27-08 (month 1); Aug due 10000, Sep 12000; NOTE: Aug received 10000, Sep received 0
+    (36, 'C.சுடர்மணி', 100000, '2026-09-01', NULL, 5400, 'ACTIVE', 1),   -- 1 Lakh, joined Sep 2026 (Sep = chit month 1), paid up to Sep 5400
+    (37, 'முசிந்தா_2', 25000, '2026-09-01', NULL, 1250, 'ACTIVE', 1),   -- 25K, joined Sep 2026 (Sep = chit month 1), paid up to Sep 1250
+    (38, 'முருகையா', 100000, '2026-09-01', NULL, 5000, 'ACTIVE', 1),   -- 1 Lakh, joined Sep 2026 (Sep = chit month 1), paid up to Sep 5000
+    (39, 'மாரியப்பன் சென்னை-3', 100000, '2026-09-01', NULL, 5000, 'ACTIVE', 1),   -- 1 Lakh, joined Sep 2026 (Sep = chit month 1), paid up to Sep 5000
+    (40, 'மாரியப்பன் சென்னை-4', 100000, '2026-09-01', NULL, 5000, 'ACTIVE', 1),   -- 1 Lakh, joined Sep 2026 (Sep = chit month 1), paid up to Sep 5000
+    (41, 'சரவணா டெய்லர்', 100000, '2026-09-01', NULL, 1500, 'ACTIVE', 1),   -- 1 Lakh, joined Sep 2026 (Sep = chit month 1), paid up to Sep 1500
+    (42, 'கீதா சித்தி', 100000, '2026-09-01', NULL, 5000, 'ACTIVE', 1);   -- 1 Lakh, joined Sep 2026 (Sep = chit month 1), paid up to Sep 5000
+
+-- ---------------------------------------------------------------------
+-- STEP C  Checks
+-- ---------------------------------------------------------------------
+SELECT COUNT(*) AS chits, SUM(opening_paid) AS opening_paid_total FROM chits;       -- expect 42 and 516850.00
+SELECT plan_amount, COUNT(*) AS chits FROM chits GROUP BY plan_amount ORDER BY plan_amount;
+SELECT chit_no, member_name, taken_month FROM chits WHERE taken_month IS NOT NULL ORDER BY chit_no;   -- expect 2, 4, 14, 17, 18, 34, 35
+
+-- ---------------------------------------------------------------------
+-- WHAT TO DO NEXT (in the app)
+--   1. Generate October 2026  (POST /api/sheets/generate  {"year":2026,"month":10}).
+--      October is chit month 6 for chit 1 (joined May), 5 for chits 2 to 14 (joined Jun),
+--      4 for chits 15 to 29 (joined Jul), 3 for chits 30 to 35 (joined Aug), 2 for chits 36 to 42 (joined Sep)
+--      - the generate API works this out from joined_date.
+--   2. Enter October receipts with the collection screen / API.
+--
+-- KNOWN DIFFERENCES FROM YOUR SHEET (fixed in the next steps, not in this script)
+--   * Chits 14 and 34 pay the higher amount from month 1 (taken_month would be 0). The database
+--     only allows 1 or more today, so they are loaded as 1. Result: total payable 62500 instead
+--     of 63000 (chit 14) and 125000 instead of 126000 (chit 34). The taken dialog in step 3
+--     will let you set "higher amount starts from month 1" and the exact total payable.
+--   * Chits 2 and 4: your sheet shows total payable 126000 and 125000; the formula gives 125000
+--     and 124000. Step 3 lets you type the exact figure.
+--   * Chits 11 and 29: the Aug and Sep sheets repeat a month number, so the sheet is one month
+--     behind the calendar. This script uses the calendar month.
+-- ---------------------------------------------------------------------

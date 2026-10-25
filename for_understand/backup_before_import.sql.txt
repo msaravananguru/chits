@@ -1,0 +1,101 @@
+-- =====================================================================
+-- BACKUP BEFORE THE REAL-DATA IMPORT   (run this FIRST, then real_data_insert_v2.sql.txt)
+-- Database: sudardev
+--
+-- What it does
+--   PART 1  shows what is in the tables right now (read only, nothing is changed)
+--   PART 2  makes a copy of the 5 tables that the import will erase:
+--             chits, chit_payments, chit_collections, monthly_sheet, collection_days
+--           copies are named  bak_20261025_<table>
+--           (CREATE TABLE IF NOT EXISTS: running this script again will NOT overwrite a copy that already exists)
+--   PART 3  proves that every copy has the same number of rows and the same total as the original
+--   PART 4  UNDO script (commented): puts everything back from the copies, if you ever need it
+--   PART 5  OPTIONAL (commented): bring back real October receipts after the import
+--
+-- NOT touched by the import: users, chit_plans, chit_plan_receivable, audit_log.
+-- =====================================================================
+USE sudardev;
+
+-- ======================= PART 1 : WHAT IS THERE NOW (read only) =======================
+SELECT 'chits' AS table_name, COUNT(*) AS `rows`, NULL AS total FROM chits
+UNION ALL SELECT 'chit_payments',    COUNT(*), SUM(amount)      FROM chit_payments
+UNION ALL SELECT 'chit_collections', COUNT(*), SUM(paid_amount) FROM chit_collections
+UNION ALL SELECT 'monthly_sheet',    COUNT(*), NULL             FROM monthly_sheet
+UNION ALL SELECT 'collection_days',  COUNT(*), NULL             FROM collection_days;
+
+-- the members (look at this list: anything you want to keep must be re-entered after the import)
+SELECT chit_no, member_name, member_name_tamil, plan_amount, joined_date, taken_month, opening_paid, pay_mode, daily_amount, status
+FROM chits ORDER BY chit_no;
+
+-- the months
+SELECT id, sheet_year, sheet_month, status, locked_at FROM monthly_sheet ORDER BY sheet_year, sheet_month;
+
+-- receipts per month
+SELECT DATE_FORMAT(paid_date, '%Y-%m') AS month_, COUNT(*) AS receipts, SUM(amount) AS received
+FROM chit_payments GROUP BY DATE_FORMAT(paid_date, '%Y-%m') ORDER BY 1;
+
+-- every receipt (newest first)
+SELECT p.id, p.chit_no, c.member_name, p.paid_date, p.amount, p.remark
+FROM chit_payments p LEFT JOIN chits c ON c.chit_no = p.chit_no
+ORDER BY p.paid_date DESC, p.chit_no;
+
+-- ======================= PART 2 : BACKUP COPIES =======================
+CREATE TABLE IF NOT EXISTS bak_20261025_chits            AS SELECT * FROM chits;
+CREATE TABLE IF NOT EXISTS bak_20261025_monthly_sheet    AS SELECT * FROM monthly_sheet;
+CREATE TABLE IF NOT EXISTS bak_20261025_chit_collections AS SELECT * FROM chit_collections;
+CREATE TABLE IF NOT EXISTS bak_20261025_chit_payments    AS SELECT * FROM chit_payments;
+CREATE TABLE IF NOT EXISTS bak_20261025_collection_days  AS SELECT * FROM collection_days;
+
+-- ======================= PART 3 : CHECK THE COPIES =======================
+-- Every line must show  same = 1  (before the import is run)
+SELECT 'chits' AS table_name,
+       (SELECT COUNT(*) FROM chits) AS original_rows, (SELECT COUNT(*) FROM bak_20261025_chits) AS copy_rows,
+       (SELECT COUNT(*) FROM chits) = (SELECT COUNT(*) FROM bak_20261025_chits) AS same
+UNION ALL SELECT 'monthly_sheet',
+       (SELECT COUNT(*) FROM monthly_sheet), (SELECT COUNT(*) FROM bak_20261025_monthly_sheet),
+       (SELECT COUNT(*) FROM monthly_sheet) = (SELECT COUNT(*) FROM bak_20261025_monthly_sheet)
+UNION ALL SELECT 'chit_collections',
+       (SELECT COUNT(*) FROM chit_collections), (SELECT COUNT(*) FROM bak_20261025_chit_collections),
+       (SELECT COUNT(*) FROM chit_collections) = (SELECT COUNT(*) FROM bak_20261025_chit_collections)
+UNION ALL SELECT 'chit_payments',
+       (SELECT COUNT(*) FROM chit_payments), (SELECT COUNT(*) FROM bak_20261025_chit_payments),
+       (SELECT COUNT(*) FROM chit_payments) = (SELECT COUNT(*) FROM bak_20261025_chit_payments)
+UNION ALL SELECT 'collection_days',
+       (SELECT COUNT(*) FROM collection_days), (SELECT COUNT(*) FROM bak_20261025_collection_days),
+       (SELECT COUNT(*) FROM collection_days) = (SELECT COUNT(*) FROM bak_20261025_collection_days);
+
+SELECT (SELECT IFNULL(SUM(amount), 0) FROM chit_payments) AS receipts_original,
+       (SELECT IFNULL(SUM(amount), 0) FROM bak_20261025_chit_payments) AS receipts_copy;      -- must be equal
+
+-- ======================= PART 4 : UNDO (only if needed; remove the leading "-- " to use) =======================
+-- Puts the old data back exactly as it was when the copies were made. Order matters (parents first).
+--
+-- SET SQL_SAFE_UPDATES = 0;
+-- DELETE FROM chit_payments;
+-- DELETE FROM collection_days;
+-- DELETE FROM chit_collections;
+-- DELETE FROM monthly_sheet;
+-- DELETE FROM chits;
+-- SET SQL_SAFE_UPDATES = 1;
+-- INSERT INTO chits            SELECT * FROM bak_20261025_chits;
+-- INSERT INTO monthly_sheet    SELECT * FROM bak_20261025_monthly_sheet;
+-- INSERT INTO chit_collections SELECT * FROM bak_20261025_chit_collections;
+-- INSERT INTO chit_payments    SELECT * FROM bak_20261025_chit_payments;
+-- INSERT INTO collection_days  SELECT * FROM bak_20261025_collection_days;
+
+-- ======================= PART 5 : OPTIONAL - keep real October receipts =======================
+-- Run ONLY if the October receipts in PART 1 are real money you collected (not test entries), and ONLY after the import.
+-- The members are the same numbers 1 to 42, so a receipt of chit N goes to chit N. Receipts of test members (43 and above) are not copied.
+-- Generate October 2026 in the app first (Monthly Sheet page), then:
+--
+-- INSERT INTO chit_payments (chit_no, paid_date, amount, remark, created_by)
+-- SELECT chit_no, paid_date, amount, remark, created_by
+-- FROM bak_20261025_chit_payments
+-- WHERE paid_date >= '2026-10-01' AND chit_no BETWEEN 1 AND 42
+-- ORDER BY paid_date, chit_no;
+--
+-- INSERT INTO collection_days (day_date, save_count, created_by)
+-- SELECT day_date, save_count, created_by FROM bak_20261025_collection_days WHERE day_date >= '2026-10-01';
+
+-- When you are sure everything is fine (days later), the copies can be removed:
+-- DROP TABLE bak_20261025_chits, bak_20261025_monthly_sheet, bak_20261025_chit_collections, bak_20261025_chit_payments, bak_20261025_collection_days;
