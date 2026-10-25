@@ -1,0 +1,190 @@
+USE sudardev;
+
+-- Drop old tables (child first)
+DROP TABLE IF EXISTS chit_collections;
+DROP TABLE IF EXISTS monthly_sheet;
+DROP TABLE IF EXISTS chits;
+DROP TABLE IF EXISTS chit_plan_receivable;
+DROP TABLE IF EXISTS chit_plans;
+
+-- 1. Plan rate card (one row per plan: 25K, 50K, 100K, 150K, 200K)
+CREATE TABLE chit_plans (
+    plan_amount           DECIMAL(12,2) NOT NULL,   -- e.g. 100000
+    total_months          INT           NOT NULL,   -- e.g. 21
+    monthly_before_taken  DECIMAL(12,2) NOT NULL,   -- e.g. 5000
+    monthly_after_taken   DECIMAL(12,2) NOT NULL,   -- e.g. 6000
+    PRIMARY KEY (plan_amount)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 2. Amount receivable if the chit is taken in a given month (கிடைக்கும் தொகை)
+CREATE TABLE chit_plan_receivable (
+    plan_amount        DECIMAL(12,2) NOT NULL,
+    month_no           INT           NOT NULL,
+    receivable_amount  DECIMAL(12,2) NOT NULL,
+    PRIMARY KEY (plan_amount, month_no),
+    CONSTRAINT fk_recv_plan FOREIGN KEY (plan_amount) REFERENCES chit_plans (plan_amount)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 3. Chit master (one row per member's chit)
+CREATE TABLE chits (
+    chit_no       INT           NOT NULL,
+    member_name   VARCHAR(200)  NOT NULL,
+    plan_amount   DECIMAL(12,2) NOT NULL,
+    joined_date   DATE          NOT NULL,            -- date the member joined
+    taken_month   INT           NULL,                -- NULL = not taken, 3 = taken in month 3
+    status        VARCHAR(10)   NOT NULL DEFAULT 'ACTIVE',   -- ACTIVE / CLOSED
+    created_at    TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (chit_no),
+    CONSTRAINT fk_chits_plan   FOREIGN KEY (plan_amount) REFERENCES chit_plans (plan_amount),
+    CONSTRAINT chk_chits_status CHECK (status IN ('ACTIVE','CLOSED')),
+    CONSTRAINT chk_chits_taken  CHECK (taken_month IS NULL OR taken_month >= 1)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 4. Monthly sheet (DRAFT / LOCKED)
+CREATE TABLE monthly_sheet (
+    id           INT          NOT NULL AUTO_INCREMENT,
+    sheet_year   INT          NOT NULL,
+    sheet_month  INT          NOT NULL,
+    status       VARCHAR(10)  NOT NULL DEFAULT 'DRAFT',
+    locked_at    TIMESTAMP    NULL,
+    created_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_sheet_year_month (sheet_year, sheet_month),
+    CONSTRAINT chk_sheet_month  CHECK (sheet_month BETWEEN 1 AND 12),
+    CONSTRAINT chk_sheet_status CHECK (status IN ('DRAFT','LOCKED'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 5. Monthly collections (one row per chit per month)
+CREATE TABLE chit_collections (
+    id                INT            NOT NULL AUTO_INCREMENT,
+    sheet_id          INT            NOT NULL,
+    chit_no           INT            NOT NULL,
+    paid_month        INT            NOT NULL,                -- current month number of the chit
+    due_amount        DECIMAL(12,2)  NOT NULL,                -- கட்ட வேண்டிய தொகை
+    paid_amount       DECIMAL(12,2)  NOT NULL DEFAULT 0,      -- வரவு
+    paid_date         DATE           NULL,                    -- date the payment was received
+    -- snapshot values, filled only when the month is LOCKED
+    total_paid        DECIMAL(12,2)  NULL,
+    total_due_amount  DECIMAL(12,2)  NULL,
+    months_pending    DECIMAL(8,2)   NULL,
+    remaining_amount  DECIMAL(12,2)  NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_sheet_chit (sheet_id, chit_no),
+    CONSTRAINT fk_coll_sheet FOREIGN KEY (sheet_id) REFERENCES monthly_sheet (id),
+    CONSTRAINT fk_coll_chit  FOREIGN KEY (chit_no)  REFERENCES chits (chit_no),
+    CONSTRAINT chk_coll_paid CHECK (paid_amount >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+
+
+USE sudardev;
+
+-- 1. Plans (21 months each)
+INSERT INTO chit_plans (plan_amount, total_months, monthly_before_taken, monthly_after_taken) VALUES
+    (50000, 21, 2500, 3000),
+    (100000, 21, 5000, 6000),
+    (150000, 21, 7500, 9000),
+    (200000, 21, 10000, 12000);
+
+-- 2. Receivable amount (கிடைக்கும் தொகை) by month taken
+-- Plan 50000
+INSERT INTO chit_plan_receivable (plan_amount, month_no, receivable_amount) VALUES
+    (50000, 1, 50000),
+    (50000, 2, 50000),
+    (50000, 3, 50500),
+    (50000, 4, 51000),
+    (50000, 5, 51500),
+    (50000, 6, 52000),
+    (50000, 7, 52500),
+    (50000, 8, 53000),
+    (50000, 9, 53500),
+    (50000, 10, 54000),
+    (50000, 11, 54500),
+    (50000, 12, 55000),
+    (50000, 13, 55500),
+    (50000, 14, 56000),
+    (50000, 15, 56500),
+    (50000, 16, 57000),
+    (50000, 17, 57500),
+    (50000, 18, 58000),
+    (50000, 19, 58500),
+    (50000, 20, 59000),
+    (50000, 21, 60000);
+
+-- Plan 100000
+INSERT INTO chit_plan_receivable (plan_amount, month_no, receivable_amount) VALUES
+    (100000, 1, 100000),
+    (100000, 2, 100000),
+    (100000, 3, 101000),
+    (100000, 4, 102000),
+    (100000, 5, 103000),
+    (100000, 6, 104000),
+    (100000, 7, 105000),
+    (100000, 8, 106000),
+    (100000, 9, 107000),
+    (100000, 10, 108000),
+    (100000, 11, 109000),
+    (100000, 12, 110000),
+    (100000, 13, 111000),
+    (100000, 14, 112000),
+    (100000, 15, 113000),
+    (100000, 16, 114000),
+    (100000, 17, 115000),
+    (100000, 18, 116000),
+    (100000, 19, 117000),
+    (100000, 20, 118000),
+    (100000, 21, 120000);
+
+-- Plan 150000
+INSERT INTO chit_plan_receivable (plan_amount, month_no, receivable_amount) VALUES
+    (150000, 1, 150000),
+    (150000, 2, 150000),
+    (150000, 3, 151500),
+    (150000, 4, 153000),
+    (150000, 5, 154500),
+    (150000, 6, 156000),
+    (150000, 7, 157500),
+    (150000, 8, 159000),
+    (150000, 9, 160500),
+    (150000, 10, 162000),
+    (150000, 11, 163500),
+    (150000, 12, 165000),
+    (150000, 13, 166500),
+    (150000, 14, 168000),
+    (150000, 15, 169500),
+    (150000, 16, 171000),
+    (150000, 17, 172500),
+    (150000, 18, 174000),
+    (150000, 19, 175500),
+    (150000, 20, 177000),
+    (150000, 21, 180000);
+
+-- Plan 200000
+INSERT INTO chit_plan_receivable (plan_amount, month_no, receivable_amount) VALUES
+    (200000, 1, 200000),
+    (200000, 2, 200000),
+    (200000, 3, 202000),
+    (200000, 4, 204000),
+    (200000, 5, 206000),
+    (200000, 6, 208000),
+    (200000, 7, 210000),
+    (200000, 8, 212000),
+    (200000, 9, 214000),
+    (200000, 10, 216000),
+    (200000, 11, 218000),
+    (200000, 12, 220000),
+    (200000, 13, 222000),
+    (200000, 14, 224000),
+    (200000, 15, 226000),
+    (200000, 16, 228000),
+    (200000, 17, 230000),
+    (200000, 18, 232000),
+    (200000, 19, 234000),
+    (200000, 20, 236000),
+    (200000, 21, 240000);
+
+-- 25K plan: NOT from your sheets. Pattern-based guess. Do not run until you confirm with the 25K rate table.
+ INSERT INTO chit_plans (plan_amount, total_months, monthly_before_taken, monthly_after_taken) VALUES (25000, 21, 1250, 1500);
+ INSERT INTO chit_plan_receivable (plan_amount, month_no, receivable_amount) VALUES
+     (25000, 1, 25000), (25000, 2, 25000), (25000, 3, 25250), (25000, 4, 25500), (25000, 5, 25750), (25000, 6, 26000), (25000, 7, 26250), (25000, 8, 26500), (25000, 9, 26750), (25000, 10, 27000), (25000, 11, 27250), (25000, 12, 27500), (25000, 13, 27750), (25000, 14, 28000), (25000, 15, 28250), (25000, 16, 28500), (25000, 17, 28750), (25000, 18, 29000), (25000, 19, 29250), (25000, 20, 29500), (25000, 21, 30000);

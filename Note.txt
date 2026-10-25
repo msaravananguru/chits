@@ -1,0 +1,76 @@
+USE sudardev;
+
+-- Drop old tables (child first)
+DROP TABLE IF EXISTS chit_collections;
+DROP TABLE IF EXISTS monthly_sheet;
+DROP TABLE IF EXISTS chits;
+DROP TABLE IF EXISTS chit_plan_receivable;
+DROP TABLE IF EXISTS chit_plans;
+
+-- 1. Plan rate card (one row per plan: 25K, 50K, 100K, 150K, 200K)
+CREATE TABLE chit_plans (
+    plan_amount           DECIMAL(12,2) NOT NULL,   -- e.g. 100000
+    total_months          INT           NOT NULL,   -- e.g. 21
+    monthly_before_taken  DECIMAL(12,2) NOT NULL,   -- e.g. 5000
+    monthly_after_taken   DECIMAL(12,2) NOT NULL,   -- e.g. 6000
+    PRIMARY KEY (plan_amount)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 2. Amount receivable if the chit is taken in a given month (கிடைக்கும் தொகை)
+CREATE TABLE chit_plan_receivable (
+    plan_amount        DECIMAL(12,2) NOT NULL,
+    month_no           INT           NOT NULL,
+    receivable_amount  DECIMAL(12,2) NOT NULL,
+    PRIMARY KEY (plan_amount, month_no),
+    CONSTRAINT fk_recv_plan FOREIGN KEY (plan_amount) REFERENCES chit_plans (plan_amount)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 3. Chit master (one row per member's chit)
+CREATE TABLE chits (
+    chit_no       INT           NOT NULL,
+    member_name   VARCHAR(200)  NOT NULL,
+    plan_amount   DECIMAL(12,2) NOT NULL,
+    joined_date   DATE          NOT NULL,            -- date the member joined
+    taken_month   INT           NULL,                -- NULL = not taken, 3 = taken in month 3
+    status        VARCHAR(10)   NOT NULL DEFAULT 'ACTIVE',   -- ACTIVE / CLOSED
+    created_at    TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (chit_no),
+    CONSTRAINT fk_chits_plan   FOREIGN KEY (plan_amount) REFERENCES chit_plans (plan_amount),
+    CONSTRAINT chk_chits_status CHECK (status IN ('ACTIVE','CLOSED')),
+    CONSTRAINT chk_chits_taken  CHECK (taken_month IS NULL OR taken_month >= 1)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 4. Monthly sheet (DRAFT / LOCKED)
+CREATE TABLE monthly_sheet (
+    id           INT          NOT NULL AUTO_INCREMENT,
+    sheet_year   INT          NOT NULL,
+    sheet_month  INT          NOT NULL,
+    status       VARCHAR(10)  NOT NULL DEFAULT 'DRAFT',
+    locked_at    TIMESTAMP    NULL,
+    created_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_sheet_year_month (sheet_year, sheet_month),
+    CONSTRAINT chk_sheet_month  CHECK (sheet_month BETWEEN 1 AND 12),
+    CONSTRAINT chk_sheet_status CHECK (status IN ('DRAFT','LOCKED'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 5. Monthly collections (one row per chit per month)
+CREATE TABLE chit_collections (
+    id                INT            NOT NULL AUTO_INCREMENT,
+    sheet_id          INT            NOT NULL,
+    chit_no           INT            NOT NULL,
+    paid_month        INT            NOT NULL,                -- current month number of the chit
+    due_amount        DECIMAL(12,2)  NOT NULL,                -- கட்ட வேண்டிய தொகை
+    paid_amount       DECIMAL(12,2)  NOT NULL DEFAULT 0,      -- வரவு
+    paid_date         DATE           NULL,                    -- date the payment was received
+    -- snapshot values, filled only when the month is LOCKED
+    total_paid        DECIMAL(12,2)  NULL,
+    total_due_amount  DECIMAL(12,2)  NULL,
+    months_pending    DECIMAL(8,2)   NULL,
+    remaining_amount  DECIMAL(12,2)  NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_sheet_chit (sheet_id, chit_no),
+    CONSTRAINT fk_coll_sheet FOREIGN KEY (sheet_id) REFERENCES monthly_sheet (id),
+    CONSTRAINT fk_coll_chit  FOREIGN KEY (chit_no)  REFERENCES chits (chit_no),
+    CONSTRAINT chk_coll_paid CHECK (paid_amount >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
